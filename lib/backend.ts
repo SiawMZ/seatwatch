@@ -22,6 +22,11 @@ async function rpc<T>(fn: string, args: Record<string, unknown>): Promise<T> {
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ fn, args }),
   });
+  // The local database only exists under `next dev`, so a deployed site lands here when its
+  // Supabase settings were missing at build time.
+  if (response.status === 404) {
+    throw new Error("Supabase isn't set up for this site. Add its URL and key in Vercel, then redeploy.");
+  }
   const body = await response.json();
   if (!response.ok) throw new Error(body.error ?? "Request failed");
   return body.data as T;
