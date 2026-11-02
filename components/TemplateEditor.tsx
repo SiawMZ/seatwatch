@@ -5,28 +5,55 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { accountsAvailable, api } from "@/lib/backend";
 import {
+  autoArrange,
   DOORS,
   generateLayout,
+  kindOf,
   LIMITS,
+  sectionSize,
   type Door,
   type LayoutConfig,
   type Seat,
   type SectionConfig,
+  type SectionKind,
 } from "@/lib/layout";
 import { rememberTemplate } from "@/lib/saved-templates";
 import { useAccount } from "@/lib/use-account";
 import { AccountBar } from "./AccountBar";
 import { SeatMap } from "./SeatMap";
 
-const newSection = (index: number, id: string): SectionConfig => ({
+const newSection = (index: number, id: string, kind: SectionKind = "rows"): SectionConfig => ({
   id,
-  name: `Section ${index}`,
+  name: kind === "tables" ? "Tables" : `Section ${index}`,
+  kind,
   rows: 15,
   cols: 6,
-  newLine: false,
+  newLine: kind === "tables",
+  tables: 10,
+  seatsPerTable: 8,
+  tablesPerRow: 4,
 });
 
-const clamp = (value: number, max: number) => Math.min(max, Math.max(1, Math.round(value) || 1));
+const clamp = (value: number, max: number, min = 1) =>
+  Math.min(max, Math.max(min, Math.round(value) || min));
+
+type NumberFieldProps = { label: string; value: number; min?: number; max: number; onChange: (v: number) => void };
+
+function NumberField({ label, value, min = 1, max, onChange }: NumberFieldProps) {
+  return (
+    <label className="field">
+      <span>{label}</span>
+      <input
+        type="number"
+        inputMode="numeric"
+        min={min}
+        max={max}
+        value={value}
+        onChange={(e) => onChange(clamp(+e.target.value, max, min))}
+      />
+    </label>
+  );
+}
 
 type Props = {
   token?: string;
@@ -59,6 +86,7 @@ export function TemplateEditor({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [copied, setCopied] = useState(false);
+  const [mode, setMode] = useState<"seats" | "move">("seats");
 
   const preview = useMemo(() => generateLayout(config, true), [config]);
   const seatCount = preview.seats.filter((s) => !s.removed).length;
@@ -77,6 +105,34 @@ export function TemplateEditor({
     change({
       doors: config.doors.includes(door) ? config.doors.filter((d) => d !== door) : [...config.doors, door],
     });
+
+  // The first drag pins every section where it is now, so only the dragged one moves.
+  const moveSection = (id: string, dx: number, dy: number) => {
+    const arranged = autoArrange(config.sections);
+    change({
+      freeLayout: true,
+      sections: config.sections.map((s) => {
+        const x = config.freeLayout ? (s.x ?? arranged[s.id].x) : arranged[s.id].x;
+        const y = config.freeLayout ? (s.y ?? arranged[s.id].y) : arranged[s.id].y;
+        return s.id === id ? { ...s, x: x + dx, y: y + dy } : { ...s, x, y };
+      }),
+    });
+  };
+
+  const addSection = (kind: SectionKind) => {
+    const section = newSection(config.sections.length + 1, crypto.randomUUID().slice(0, 8), kind);
+    if (config.freeLayout) {
+      // Keep the hand-made arrangement and put the new section underneath, ready to drag.
+      const arranged = autoArrange(config.sections);
+      const bottom = Math.max(
+        0,
+        ...config.sections.map((s) => (s.y ?? arranged[s.id].y) + sectionSize(s).h),
+      );
+      const left = Math.min(...config.sections.map((s) => s.x ?? arranged[s.id].x));
+      Object.assign(section, { x: left, y: bottom + 1.5 });
+    }
+    change({ sections: [...config.sections, section] });
+  };
 
   // Tapping a seat cycles it: normal, then not in use, then removed (a gap).
   const cycleSeat = (seat: Seat) => {
@@ -206,32 +262,59 @@ export function TemplateEditor({
                   onChange={(e) => updateSection(section.id, { name: e.target.value })}
                 />
               </label>
-              <div className="two-up">
-                <label className="field">
-                  <span>Rows</span>
-                  <input
-                    type="number"
-                    inputMode="numeric"
-                    min={1}
-                    max={LIMITS.rows}
-                    value={section.rows}
-                    onChange={(e) => updateSection(section.id, { rows: clamp(+e.target.value, LIMITS.rows) })}
-                  />
-                </label>
-                <label className="field">
-                  <span>Seats per row</span>
-                  <input
-                    type="number"
-                    inputMode="numeric"
-                    min={1}
-                    max={LIMITS.cols}
-                    value={section.cols}
-                    onChange={(e) => updateSection(section.id, { cols: clamp(+e.target.value, LIMITS.cols) })}
-                  />
-                </label>
+              <div className="segmented" role="radiogroup" aria-label="Section type">
+                {(["rows", "tables"] as const).map((kind) => (
+                  <button
+                    key={kind}
+                    type="button"
+                    role="radio"
+                    aria-checked={kindOf(section) === kind}
+                    onClick={() => updateSection(section.id, { kind })}
+                  >
+                    {kind === "rows" ? "Rows of seats" : "Round tables"}
+                  </button>
+                ))}
               </div>
+              {kindOf(section) === "rows" ? (
+                <div className="two-up">
+                  <NumberField
+                    label="Rows"
+                    value={section.rows}
+                    max={LIMITS.rows}
+                    onChange={(rows) => updateSection(section.id, { rows })}
+                  />
+                  <NumberField
+                    label="Seats per row"
+                    value={section.cols}
+                    max={LIMITS.cols}
+                    onChange={(cols) => updateSection(section.id, { cols })}
+                  />
+                </div>
+              ) : (
+                <div className="three-up">
+                  <NumberField
+                    label="Tables"
+                    value={section.tables ?? 10}
+                    max={LIMITS.tables}
+                    onChange={(tables) => updateSection(section.id, { tables })}
+                  />
+                  <NumberField
+                    label="Seats each"
+                    value={section.seatsPerTable ?? 8}
+                    min={2}
+                    max={LIMITS.seatsPerTable}
+                    onChange={(seatsPerTable) => updateSection(section.id, { seatsPerTable })}
+                  />
+                  <NumberField
+                    label="Per row"
+                    value={section.tablesPerRow ?? 4}
+                    max={LIMITS.tablesPerRow}
+                    onChange={(tablesPerRow) => updateSection(section.id, { tablesPerRow })}
+                  />
+                </div>
+              )}
               <div className="section-actions">
-                {index > 0 && (
+                {index > 0 && !config.freeLayout && (
                   <label className="check">
                     <input
                       type="checkbox"
@@ -253,20 +336,22 @@ export function TemplateEditor({
               </div>
             </fieldset>
           ))}
-          <button
-            type="button"
-            disabled={config.sections.length >= LIMITS.sections}
-            onClick={() =>
-              change({
-                sections: [
-                  ...config.sections,
-                  newSection(config.sections.length + 1, crypto.randomUUID().slice(0, 8)),
-                ],
-              })
-            }
-          >
-            Add section
-          </button>
+          <div className="add-buttons">
+            <button
+              type="button"
+              disabled={config.sections.length >= LIMITS.sections}
+              onClick={() => addSection("rows")}
+            >
+              Add rows
+            </button>
+            <button
+              type="button"
+              disabled={config.sections.length >= LIMITS.sections}
+              onClick={() => addSection("tables")}
+            >
+              Add round tables
+            </button>
+          </div>
 
           <h2>Doors</h2>
           <div className="checks">
@@ -288,13 +373,31 @@ export function TemplateEditor({
             Preview: {activeCount} seats
             {seatCount !== activeCount && ` + ${seatCount - activeCount} not in use`}
           </h2>
+          <div className="preview-tools">
+            <div className="segmented" role="radiogroup" aria-label="Preview mode">
+              <button type="button" role="radio" aria-checked={mode === "seats"} onClick={() => setMode("seats")}>
+                Edit seats
+              </button>
+              <button type="button" role="radio" aria-checked={mode === "move"} onClick={() => setMode("move")}>
+                Move sections
+              </button>
+            </div>
+            {config.freeLayout && (
+              <button type="button" className="link-button" onClick={() => change({ freeLayout: false })}>
+                Auto-arrange
+              </button>
+            )}
+          </div>
           <p className="hint">
-            Tap a seat to change it: normal, then not in use, then removed. Gaps between sections are aisles.
+            {mode === "seats"
+              ? "Tap a seat to change it: normal, then not in use, then removed. Gaps between sections are aisles."
+              : "Drag a section by its outline to place it. Sections snap to half a seat."}
           </p>
           <SeatMap
             layout={preview}
             statusFor={(seat) => (seat.inactive ? "not_in_use" : "available")}
             onSeatTap={cycleSeat}
+            onSectionMove={mode === "move" ? moveSection : undefined}
           />
         </div>
       </div>

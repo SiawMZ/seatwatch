@@ -419,7 +419,9 @@ export function Room({ code }: { code: string }) {
               </button>
             </div>
             <span className="find-result">
-              {found.rows === 0 ? "No row fits" : `Fits in ${found.rows} ${found.rows === 1 ? "row" : "rows"}`}
+              {found.rows === 0
+                ? "Nowhere fits"
+                : `Fits in ${found.rows} ${room.layout.tables?.length ? "rows or tables" : found.rows === 1 ? "row" : "rows"}`}
             </span>
             <button type="button" onClick={() => setGroupSize(null)}>
               Done

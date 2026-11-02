@@ -32,7 +32,14 @@ type Props = {
   /** 1 fits the map to the width of its box. Leave both out to let the map keep its own zoom. */
   zoom?: number;
   onZoomChange?: (zoom: number) => void;
+  /** Turns on arranging: sections can be dragged, and this gets the distance moved in seat widths. */
+  onSectionMove?: (id: string, dx: number, dy: number) => void;
 };
+
+type Moving = { id: string; startX: number; startY: number; unit: number; dx: number; dy: number };
+
+/** Moves snap to half a seat, so sections line up easily. */
+const snap = (value: number) => Math.round(value * 2) / 2;
 
 export function SeatMap({
   layout,
@@ -45,8 +52,13 @@ export function SeatMap({
   highlight = null,
   zoom: controlledZoom,
   onZoomChange,
+  onSectionMove,
 }: Props) {
   const rows = useMemo(() => rowsOf(layout), [layout]);
+  const arranging = Boolean(onSectionMove);
+  const [moving, setMoving] = useState<Moving | null>(null);
+  const shift = (section?: string) =>
+    moving && section === moving.id ? `translate(${snap(moving.dx)} ${snap(moving.dy)})` : undefined;
   const seatsById = useMemo(() => new Map(layout.seats.map((s) => [s.id, s])), [layout]);
   const [ownZoom, setOwnZoom] = useState(1);
   const zoom = controlledZoom ?? ownZoom;
@@ -241,26 +253,65 @@ export function SeatMap({
           );
         })}
 
-        {onRowTap &&
-          rows.map(({ id, seats }) => {
-            const first = seats.reduce((a, b) => (b.x < a.x ? b : a));
-            const free = seats.filter((s) => statusFor(s) === "available").length;
-            return (
-              <g key={id} className="row-handle" onClick={() => !dragMode && onRowTap(seats)}>
-                <title>Mark whole row</title>
-                <rect x={first.x - 1.1} y={first.y + 0.08} width={0.95} height={0.84} rx={0.42} />
+        {(layout.tables ?? []).map((table) => {
+          const tableSeats = rows.find((r) => r.id === table.id)?.seats ?? [];
+          const free = tableSeats.filter((s) => statusFor(s) === "available").length;
+          return (
+            <g
+              key={table.id}
+              className={onRowTap ? "table tappable" : "table"}
+              transform={shift(table.section)}
+              onClick={() => onRowTap && !dragMode && onRowTap(tableSeats)}
+            >
+              {onRowTap && <title>Mark whole table</title>}
+              <circle cx={table.cx} cy={table.cy} r={Math.max(0.5, table.r - 0.7)} />
+              <text
+                x={table.cx}
+                y={table.cy - (onRowTap ? 0.3 : 0)}
+                fontSize={0.42}
+                textAnchor="middle"
+                dominantBaseline="central"
+              >
+                T{table.label}
+              </text>
+              {onRowTap && (
                 <text
-                  x={first.x - 0.625}
-                  y={first.y + 0.5}
+                  className="free"
+                  x={table.cx}
+                  y={table.cy + 0.3}
                   fontSize={0.5}
                   textAnchor="middle"
                   dominantBaseline="central"
                 >
                   {free}
                 </text>
-              </g>
-            );
-          })}
+              )}
+            </g>
+          );
+        })}
+
+        {onRowTap &&
+          rows
+            .filter((row) => !row.isTable)
+            .map(({ id, seats }) => {
+              const first = seats.reduce((a, b) => (b.x < a.x ? b : a));
+              const free = seats.filter((s) => statusFor(s) === "available").length;
+              return (
+                <g key={id} className="row-handle" onClick={() => !dragMode && onRowTap(seats)}>
+                  <title>Mark whole row</title>
+                  <rect x={first.x - 1.1} y={first.y + 0.08} width={0.95} height={0.84} rx={0.42} />
+                  <text
+                    x={first.x - 0.625}
+                    y={first.y + 0.5}
+                    fontSize={0.5}
+                    textAnchor="middle"
+                    dominantBaseline="central"
+                  >
+                    {free}
+                  </text>
+                </g>
+              );
+            })}
 
         {layout.seats.map((seat) => {
           const status = statusFor(seat);
@@ -272,7 +323,8 @@ export function SeatMap({
               className={lit ? "seat lit" : "seat"}
               data-seat={seat.id}
               data-status={seat.removed ? "removed" : status}
-              onClick={dragMode ? undefined : () => onSeatTap(seat)}
+              transform={shift(seat.section)}
+              onClick={dragMode || arranging ? undefined : () => onSeatTap(seat)}
             >
               {/* Fills the whole cell so near-misses between seats still count as a tap. */}
               <rect x={seat.x} y={seat.y} width={1} height={1} fill="transparent" />
@@ -315,6 +367,56 @@ export function SeatMap({
             </g>
           );
         })}
+
+        {arranging &&
+          (layout.boxes ?? []).map((section) => (
+            <g key={section.id} className="section-box" transform={shift(section.id)}>
+              <text x={section.x} y={section.y - 0.35} fontSize={0.5} fontWeight={700}>
+                {section.name}
+              </text>
+              <rect
+                x={section.x - 0.25}
+                y={section.y - 0.25}
+                width={section.w + 0.5}
+                height={section.h + 0.5}
+                rx={0.3}
+                data-moving={moving?.id === section.id || undefined}
+                onPointerDown={(event) => {
+                  const svgWidth = svg.current?.getBoundingClientRect().width ?? 1;
+                  // Keeps the drag going if the finger slides off the outline.
+                  try {
+                    event.currentTarget.setPointerCapture(event.pointerId);
+                  } catch {
+                    // Not every pointer can be captured, and the drag still works without it.
+                  }
+                  setMoving({
+                    id: section.id,
+                    startX: event.clientX,
+                    startY: event.clientY,
+                    unit: svgWidth / layout.width,
+                    dx: 0,
+                    dy: 0,
+                  });
+                }}
+                onPointerMove={(event) => {
+                  if (moving?.id !== section.id) return;
+                  setMoving({
+                    ...moving,
+                    dx: (event.clientX - moving.startX) / moving.unit,
+                    dy: (event.clientY - moving.startY) / moving.unit,
+                  });
+                }}
+                onPointerUp={() => {
+                  if (moving?.id !== section.id) return;
+                  const dx = snap(moving.dx);
+                  const dy = snap(moving.dy);
+                  setMoving(null);
+                  if (dx || dy) onSectionMove?.(section.id, dx, dy);
+                }}
+                onPointerCancel={() => setMoving(null)}
+              />
+            </g>
+          ))}
       </svg>
     </div>
   );

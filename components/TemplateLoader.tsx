@@ -40,12 +40,12 @@ export function TemplateLoader({ token }: { token: string }) {
     );
   }
 
-  const { sections, doors, overrides } = template.layout;
+  const { sections, doors, overrides, freeLayout } = template.layout;
   return (
     <TemplateEditor
       token={token}
       initialName={template.name}
-      initialConfig={{ sections, doors, overrides }}
+      initialConfig={{ sections, doors, overrides, freeLayout }}
       owned={template.owned}
       ownedByOther={template.ownedByOther}
     />

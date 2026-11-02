@@ -79,6 +79,18 @@ export function drawRoom(room: RoomData, date: Date) {
     text("DOOR", left + (p.x + p.w / 2) * cell, top + (p.y + 0.4) * cell, cell * 0.38, MUTED, true);
   }
 
+  for (const table of layout.tables ?? []) {
+    const x = left + table.cx * cell;
+    const y = top + table.cy * cell;
+    ctx.fillStyle = "#e4e0d6";
+    ctx.strokeStyle = "#d4d0c6";
+    ctx.beginPath();
+    ctx.arc(x, y, Math.max(0.5, table.r - 0.7) * cell, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+    text(`T${table.label}`, x, y, cell * 0.42, MUTED, true);
+  }
+
   for (const seat of layout.seats) {
     drawSeat(ctx, left + seat.x * cell, top + seat.y * cell, cell, statusOf(seats, seat.id));
   }

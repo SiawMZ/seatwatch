@@ -23,13 +23,23 @@ export const DOORS: { id: Door; label: string }[] = [
   { id: "back-right", label: "Back right" },
 ];
 
+export type SectionKind = "rows" | "tables";
+
 export type SectionConfig = {
   id: string;
   name: string;
+  /** Missing on templates made before round tables existed, which are all rows. */
+  kind?: SectionKind;
   rows: number;
   cols: number;
-  /** Starts a new line of sections, for example a block behind the first ones. */
+  /** Starts a new line of sections, for example a block behind the first ones. Auto-arrange only. */
   newLine: boolean;
+  tables?: number;
+  seatsPerTable?: number;
+  tablesPerRow?: number;
+  /** Top-left corner in seat widths, used once sections have been moved by hand. */
+  x?: number;
+  y?: number;
 };
 
 export type LayoutConfig = {
@@ -37,21 +47,37 @@ export type LayoutConfig = {
   doors: Door[];
   /** Seats changed by hand in the editor. Kept apart so resizing a section keeps them. */
   overrides: Record<string, "inactive" | "removed">;
+  /** True once any section has been dragged. Otherwise sections are lined up automatically. */
+  freeLayout?: boolean;
 };
 
 // Every arrangement becomes this flat list, so marking, counting and export
-// don't care whether it came from blocks of rows or, later, round tables.
+// don't care whether it came from blocks of rows or round tables.
 export type Seat = {
   id: string;
   x: number;
   y: number;
   group: string;
+  /** The row, or for round tables the table, that the seat belongs to. */
   row: string;
+  section?: string;
+  /** Position around a table, so "next to each other" can wrap round the circle. */
+  order?: number;
   inactive?: boolean;
   removed?: boolean;
 };
 
-export type Layout = LayoutConfig & { width: number; height: number; seats: Seat[] };
+export type Table = { id: string; label: string; cx: number; cy: number; r: number; section: string };
+export type SectionBox = { id: string; name: string; x: number; y: number; w: number; h: number };
+
+// Rooms opened before Stage 3 stored layouts without tables or boxes, so both are optional.
+export type Layout = LayoutConfig & {
+  width: number;
+  height: number;
+  seats: Seat[];
+  tables?: Table[];
+  boxes?: SectionBox[];
+};
 
 export const STAGE_HEIGHT = 1.6;
 const SEATS_TOP = STAGE_HEIGHT + 1.4;
@@ -59,47 +85,137 @@ const BOTTOM_STRIP = 1.8;
 const ROW_HANDLE = 1.3;
 const SECTION_GAP = 1;
 const LINE_GAP = 1.5;
+const TABLE_GAP = 1;
 
-export const LIMITS = { sections: 12, rows: 60, cols: 40, seats: 2000 };
+export const LIMITS = {
+  sections: 12,
+  rows: 60,
+  cols: 40,
+  tables: 60,
+  seatsPerTable: 16,
+  tablesPerRow: 10,
+  seats: 2000,
+};
 
-export function generateLayout(config: LayoutConfig, includeRemoved = false): Layout {
+export const kindOf = (section: SectionConfig): SectionKind => section.kind ?? "rows";
+
+/** Distance from a table's centre to the middle of its seats. */
+const tableRadius = (seats: number) => Math.max(1.3, (seats * 1.2) / (2 * Math.PI));
+
+function tableGrid(section: SectionConfig) {
+  const seats = section.seatsPerTable ?? 8;
+  const r = tableRadius(seats);
+  const cell = 2 * r + 1 + TABLE_GAP;
+  const perRow = Math.min(section.tablesPerRow ?? 4, section.tables ?? 1);
+  return { seats, r, cell, perRow, count: section.tables ?? 1 };
+}
+
+export function sectionSize(section: SectionConfig) {
+  if (kindOf(section) === "tables") {
+    const { cell, perRow, count } = tableGrid(section);
+    return { w: perRow * cell - TABLE_GAP, h: Math.ceil(count / perRow) * cell - TABLE_GAP };
+  }
+  return { w: ROW_HANDLE + section.cols, h: section.rows };
+}
+
+/** Lines sections up side by side, centred, starting a new line where asked. */
+export function autoArrange(sections: SectionConfig[]) {
   const lines: SectionConfig[][] = [];
-  for (const section of config.sections) {
+  for (const section of sections) {
     if (section.newLine || lines.length === 0) lines.push([]);
     lines[lines.length - 1].push(section);
   }
-
   const lineWidth = (line: SectionConfig[]) =>
-    line.reduce((sum, s) => sum + ROW_HANDLE + s.cols, 0) + SECTION_GAP * (line.length - 1);
-  const width = Math.max(4, ...lines.map(lineWidth));
+    line.reduce((sum, s) => sum + sectionSize(s).w, 0) + SECTION_GAP * (line.length - 1);
+  const width = Math.max(0, ...lines.map(lineWidth));
 
-  const seats: Seat[] = [];
-  let top = SEATS_TOP;
+  const positions: Record<string, { x: number; y: number }> = {};
+  let top = 0;
   for (const line of lines) {
     let left = (width - lineWidth(line)) / 2;
     for (const section of line) {
-      for (let row = 0; row < section.rows; row++) {
-        for (let col = 0; col < section.cols; col++) {
-          const id = `${section.id}-${row}-${col}`;
-          const override = config.overrides[id];
-          if (override === "removed" && !includeRemoved) continue;
-          seats.push({
-            id,
-            x: left + ROW_HANDLE + col,
-            y: top + row,
+      positions[section.id] = { x: left, y: top };
+      left += sectionSize(section).w + SECTION_GAP;
+    }
+    top += Math.max(...line.map((s) => sectionSize(s).h)) + LINE_GAP;
+  }
+  return positions;
+}
+
+export function generateLayout(config: LayoutConfig, includeRemoved = false): Layout {
+  const arranged = autoArrange(config.sections);
+  const placeOf = (s: SectionConfig) =>
+    config.freeLayout ? { x: s.x ?? arranged[s.id].x, y: s.y ?? arranged[s.id].y } : arranged[s.id];
+
+  // Shift everything so the left-most and top-most sections start at the edge.
+  const spans = config.sections.map((s) => ({ ...placeOf(s), ...sectionSize(s) }));
+  const minX = Math.min(0, ...spans.map((s) => s.x));
+  const minY = Math.min(0, ...spans.map((s) => s.y));
+  const contentWidth = Math.max(0, ...spans.map((s) => s.x + s.w)) - minX;
+  const contentHeight = Math.max(0, ...spans.map((s) => s.y + s.h)) - minY;
+  const width = Math.max(4, contentWidth);
+  const offsetX = -minX + (width - contentWidth) / 2;
+  const offsetY = SEATS_TOP - minY;
+
+  const seats: Seat[] = [];
+  const tables: Table[] = [];
+  const boxes: SectionBox[] = [];
+  let tableNumber = 0;
+
+  const addSeat = (seat: Omit<Seat, "inactive" | "removed">) => {
+    const override = config.overrides[seat.id];
+    if (override === "removed" && !includeRemoved) return;
+    seats.push({
+      ...seat,
+      ...(override === "inactive" ? { inactive: true } : {}),
+      ...(override === "removed" ? { removed: true } : {}),
+    });
+  };
+
+  for (const section of config.sections) {
+    const place = placeOf(section);
+    const left = place.x + offsetX;
+    const top = place.y + offsetY;
+    boxes.push({ id: section.id, name: section.name, x: left, y: top, ...sectionSize(section) });
+
+    if (kindOf(section) === "tables") {
+      const { seats: perTable, r, cell, perRow, count } = tableGrid(section);
+      for (let t = 0; t < count; t++) {
+        const cx = left + (t % perRow) * cell + r + 0.5;
+        const cy = top + Math.floor(t / perRow) * cell + r + 0.5;
+        const id = `${section.id}-t${t}`;
+        tables.push({ id, label: String(++tableNumber), cx, cy, r, section: section.id });
+        for (let k = 0; k < perTable; k++) {
+          const angle = -Math.PI / 2 + (2 * Math.PI * k) / perTable;
+          addSeat({
+            id: `${id}-${k}`,
+            x: cx + r * Math.cos(angle) - 0.5,
+            y: cy + r * Math.sin(angle) - 0.5,
             group: section.name,
-            row: `${section.id}-${row}`,
-            ...(override === "inactive" ? { inactive: true } : {}),
-            ...(override === "removed" ? { removed: true } : {}),
+            row: id,
+            section: section.id,
+            order: k,
           });
         }
       }
-      left += ROW_HANDLE + section.cols + SECTION_GAP;
+      continue;
     }
-    top += Math.max(...line.map((s) => s.rows)) + LINE_GAP;
+
+    for (let row = 0; row < section.rows; row++) {
+      for (let col = 0; col < section.cols; col++) {
+        addSeat({
+          id: `${section.id}-${row}-${col}`,
+          x: left + ROW_HANDLE + col,
+          y: top + row,
+          group: section.name,
+          row: `${section.id}-${row}`,
+          section: section.id,
+        });
+      }
+    }
   }
 
-  return { ...config, width, height: top - LINE_GAP + BOTTOM_STRIP, seats };
+  return { ...config, width, height: SEATS_TOP + contentHeight + BOTTOM_STRIP, seats, tables, boxes };
 }
 
 export function doorPosition(door: Door, layout: Layout) {
@@ -144,19 +260,45 @@ export function summarise(layout: Layout, seats: SeatMapState) {
   return { counts: count(layout.seats, seats), groups };
 }
 
+/** Seats grouped by row, or by table for round tables. */
 export function rowsOf(layout: Layout) {
+  const tableIds = new Set((layout.tables ?? []).map((t) => t.id));
   const rows = new Map<string, Seat[]>();
   for (const seat of layout.seats) {
     if (seat.removed) continue;
     rows.set(seat.row, [...(rows.get(seat.row) ?? []), seat]);
   }
-  return [...rows.entries()].map(([id, seats]) => ({ id, seats }));
+  return [...rows.entries()].map(([id, seats]) => ({ id, seats, isTable: tableIds.has(id) }));
+}
+
+/** Free seats next to each other at a round table, where the last seat sits beside the first. */
+function tableRuns(list: Seat[], seats: SeatMapState) {
+  const ordered = [...list].sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
+  const busy = ordered.findIndex((s) => statusOf(seats, s.id) !== "available");
+  if (busy === -1) return [ordered];
+  // Start just after a taken seat, so a stretch that wraps past the first seat stays whole.
+  const rotated = [...ordered.slice(busy + 1), ...ordered.slice(0, busy + 1)];
+  const runs: Seat[][] = [];
+  let run: Seat[] = [];
+  for (const seat of rotated) {
+    if (statusOf(seats, seat.id) === "available") run.push(seat);
+    else if (run.length) {
+      runs.push(run);
+      run = [];
+    }
+  }
+  if (run.length) runs.push(run);
+  return runs;
 }
 
 /** Unbroken stretches of available seats within each row. A removed seat or a busy one breaks a stretch. */
 export function availableRuns(layout: Layout, seats: SeatMapState) {
   const runs: Seat[][] = [];
   for (const row of rowsOf(layout)) {
+    if (row.isTable) {
+      runs.push(...tableRuns(row.seats, seats));
+      continue;
+    }
     let run: Seat[] = [];
     for (const seat of [...row.seats].sort((a, b) => a.x - b.x)) {
       // Positions can carry tiny rounding errors, so "next seat along" allows a little slack.
