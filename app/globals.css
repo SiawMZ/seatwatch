@@ -730,6 +730,15 @@ td:first-child {
   margin-top: 32px;
 }
 
+.field-hint {
+  color: var(--danger);
+  font-size: 0.75rem;
+}
+
+input[aria-invalid="true"] {
+  border-color: var(--danger);
+}
+
 .three-up {
   display: grid;
   grid-template-columns: repeat(3, 1fr);

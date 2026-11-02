@@ -39,7 +39,13 @@ const clamp = (value: number, max: number, min = 1) =>
 
 type NumberFieldProps = { label: string; value: number; min?: number; max: number; onChange: (v: number) => void };
 
+// Keeps what's typed as-is while editing, so clearing the box or typing "12" one digit at a time
+// works. The layout follows every number that's in range, and leaving the box tidies it up.
 function NumberField({ label, value, min = 1, max, onChange }: NumberFieldProps) {
+  const [draft, setDraft] = useState<string | null>(null);
+  const number = Number(draft);
+  const outOfRange = draft !== null && (draft === "" || !Number.isInteger(number) || number < min || number > max);
+
   return (
     <label className="field">
       <span>{label}</span>
@@ -48,9 +54,25 @@ function NumberField({ label, value, min = 1, max, onChange }: NumberFieldProps)
         inputMode="numeric"
         min={min}
         max={max}
-        value={value}
-        onChange={(e) => onChange(clamp(+e.target.value, max, min))}
+        value={draft ?? value}
+        aria-invalid={outOfRange || undefined}
+        onFocus={() => setDraft(String(value))}
+        onChange={(e) => {
+          const next = e.target.value;
+          setDraft(next);
+          const n = Number(next);
+          if (next !== "" && Number.isInteger(n) && n >= min && n <= max) onChange(n);
+        }}
+        onBlur={() => {
+          if (outOfRange) onChange(clamp(number, max, min));
+          setDraft(null);
+        }}
       />
+      {outOfRange && (
+        <small className="field-hint">
+          {min} to {max}
+        </small>
+      )}
     </label>
   );
 }
