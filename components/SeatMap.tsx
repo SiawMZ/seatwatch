@@ -38,6 +38,10 @@ type Props = {
 
 type Moving = { id: string; startX: number; startY: number; unit: number; dx: number; dy: number };
 
+/** How long a finger must rest on a section before it can be dragged, and how far it may wobble. */
+const HOLD_MS = 300;
+const HOLD_SLOP_PX = 8;
+
 /** Moves snap to half a seat, so sections line up easily. */
 const snap = (value: number) => Math.round(value * 2) / 2;
 
@@ -57,6 +61,9 @@ export function SeatMap({
   const rows = useMemo(() => rowsOf(layout), [layout]);
   const arranging = Boolean(onSectionMove);
   const [moving, setMoving] = useState<Moving | null>(null);
+  const hold = useRef<{ x: number; y: number; timer: ReturnType<typeof setTimeout> } | null>(null);
+  // Read by the touch listener below, which can't see React state.
+  const movingNow = useRef(false);
   const shift = (section?: string) =>
     moving && section === moving.id ? `translate(${snap(moving.dx)} ${snap(moving.dy)})` : undefined;
   const seatsById = useMemo(() => new Map(layout.seats.map((s) => [s.id, s])), [layout]);
@@ -135,6 +142,11 @@ export function SeatMap({
     };
 
     const onMove = (event: TouchEvent) => {
+      // While a section is being dragged, the finger moves the section, not the page.
+      if (movingNow.current) {
+        event.preventDefault();
+        return;
+      }
       if (!pinch || event.touches.length !== 2) return;
       event.preventDefault();
       const { distance, midX, midY } = read(event.touches);
@@ -171,6 +183,72 @@ export function SeatMap({
   }, []);
 
   const stage = stagePosition(layout);
+
+  // Moving sections. A mouse drags straight away. A finger has to press and hold first,
+  // so a quick swipe over a section still scrolls the map.
+  const startMoving = (id: string, x: number, y: number, target: Element, pointerId: number) => {
+    const svgWidth = svg.current?.getBoundingClientRect().width ?? 1;
+    // Keeps the drag going if the finger slides off the outline.
+    try {
+      target.setPointerCapture(pointerId);
+    } catch {
+      // Not every pointer can be captured, and the drag still works without it.
+    }
+    const next = { id, startX: x, startY: y, unit: svgWidth / layout.width, dx: 0, dy: 0 };
+    movingNow.current = true;
+    setMoving(next);
+  };
+
+  const pressSection = (id: string, event: PointerEvent<SVGRectElement>) => {
+    if (event.pointerType === "mouse") {
+      startMoving(id, event.clientX, event.clientY, event.currentTarget, event.pointerId);
+      return;
+    }
+    const target = event.currentTarget;
+    const { clientX, clientY, pointerId } = event;
+    clearTimeout(hold.current?.timer);
+    hold.current = {
+      x: clientX,
+      y: clientY,
+      timer: setTimeout(() => {
+        hold.current = null;
+        navigator.vibrate?.(15);
+        startMoving(id, clientX, clientY, target, pointerId);
+      }, HOLD_MS),
+    };
+  };
+
+  const dragSection = (id: string, event: PointerEvent) => {
+    if (hold.current) {
+      // The finger moved before the hold finished, so this is a scroll, not a move.
+      const distance = Math.hypot(event.clientX - hold.current.x, event.clientY - hold.current.y);
+      if (distance > HOLD_SLOP_PX) cancelSectionMove();
+      return;
+    }
+    if (moving?.id !== id) return;
+    setMoving({
+      ...moving,
+      dx: (event.clientX - moving.startX) / moving.unit,
+      dy: (event.clientY - moving.startY) / moving.unit,
+    });
+  };
+
+  const dropSection = (id: string) => {
+    if (hold.current) return cancelSectionMove();
+    movingNow.current = false;
+    if (moving?.id !== id) return;
+    const dx = snap(moving.dx);
+    const dy = snap(moving.dy);
+    setMoving(null);
+    if (dx || dy) onSectionMove?.(id, dx, dy);
+  };
+
+  const cancelSectionMove = () => {
+    clearTimeout(hold.current?.timer);
+    hold.current = null;
+    movingNow.current = false;
+    setMoving(null);
+  };
 
   const addFromPoint = (event: PointerEvent) => {
     if (pointers.current > 1) return;
@@ -381,39 +459,11 @@ export function SeatMap({
                 height={section.h + 0.5}
                 rx={0.3}
                 data-moving={moving?.id === section.id || undefined}
-                onPointerDown={(event) => {
-                  const svgWidth = svg.current?.getBoundingClientRect().width ?? 1;
-                  // Keeps the drag going if the finger slides off the outline.
-                  try {
-                    event.currentTarget.setPointerCapture(event.pointerId);
-                  } catch {
-                    // Not every pointer can be captured, and the drag still works without it.
-                  }
-                  setMoving({
-                    id: section.id,
-                    startX: event.clientX,
-                    startY: event.clientY,
-                    unit: svgWidth / layout.width,
-                    dx: 0,
-                    dy: 0,
-                  });
-                }}
-                onPointerMove={(event) => {
-                  if (moving?.id !== section.id) return;
-                  setMoving({
-                    ...moving,
-                    dx: (event.clientX - moving.startX) / moving.unit,
-                    dy: (event.clientY - moving.startY) / moving.unit,
-                  });
-                }}
-                onPointerUp={() => {
-                  if (moving?.id !== section.id) return;
-                  const dx = snap(moving.dx);
-                  const dy = snap(moving.dy);
-                  setMoving(null);
-                  if (dx || dy) onSectionMove?.(section.id, dx, dy);
-                }}
-                onPointerCancel={() => setMoving(null)}
+                onPointerDown={(event) => pressSection(section.id, event)}
+                onPointerMove={(event) => dragSection(section.id, event)}
+                onPointerUp={() => dropSection(section.id)}
+                onPointerCancel={cancelSectionMove}
+                onContextMenu={(event) => event.preventDefault()}
               />
             </g>
           ))}

@@ -413,7 +413,7 @@ export function TemplateEditor({
           <p className="hint">
             {mode === "seats"
               ? "Tap a seat to change it: normal, then not in use, then removed. Gaps between sections are aisles."
-              : "Drag a section by its outline to place it. Sections snap to half a seat."}
+              : "Press and hold a section, then drag it into place. Sections snap to half a seat."}
           </p>
           <SeatMap
             layout={preview}
