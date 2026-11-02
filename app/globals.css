@@ -1,3 +1,4 @@
+/* Light is the default. Dark follows the phone's setting unless the Display switch picks one. */
 :root {
   --paper: #f3f1ec;
   --surface: #fbfaf7;
@@ -5,8 +6,81 @@
   --muted: #6f6b62;
   --line: #d4d0c6;
   --accent: #2f2d29;
+  --on-accent: #ffffff;
   --danger: #b3321f;
+  --good: #1f7145;
+  --stage: #e4e0d6;
+  --ring: #1d5fd1;
+  /* Seat colours. Keep in step with STATUS_META in lib/layout.ts, which the JPG uses. */
+  --available-fill: #bfe5c9;
+  --available-stroke: #2e8b57;
+  --available-text: #17492c;
+  --occupied-fill: #2f2d29;
+  --occupied-stroke: #2f2d29;
+  --occupied-text: #ffffff;
+  --reserved-fill: #efc14f;
+  --reserved-stroke: #a87d10;
+  --reserved-text: #3d2d00;
+  --not_in_use-fill: #d9d5cb;
+  --not_in_use-stroke: #d9d5cb;
+  --not_in_use-text: #77736a;
   color-scheme: light;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --paper: #1a1917;
+    --surface: #24221f;
+    --ink: #ece8df;
+    --muted: #a29d92;
+    --line: #3b3833;
+    --accent: #ece8df;
+    --on-accent: #1a1917;
+    --danger: #e0644f;
+    --good: #5fcf8f;
+    --stage: #2c2a26;
+    --ring: #7fb0ff;
+    --available-fill: #2a6b45;
+    --available-stroke: #5fcf8f;
+    --available-text: #d6f5e1;
+    --occupied-fill: #4a4740;
+    --occupied-stroke: #4a4740;
+    --occupied-text: #e2ded4;
+    --reserved-fill: #b8901f;
+    --reserved-stroke: #e0b53f;
+    --reserved-text: #1c1600;
+    --not_in_use-fill: #2e2c28;
+    --not_in_use-stroke: #3b3833;
+    --not_in_use-text: #7c776d;
+    color-scheme: dark;
+  }
+}
+
+:root[data-theme="dark"] {
+  --paper: #1a1917;
+  --surface: #24221f;
+  --ink: #ece8df;
+  --muted: #a29d92;
+  --line: #3b3833;
+  --accent: #ece8df;
+  --on-accent: #1a1917;
+  --danger: #e0644f;
+  --good: #5fcf8f;
+  --stage: #2c2a26;
+  --ring: #7fb0ff;
+  --available-fill: #2a6b45;
+  --available-stroke: #5fcf8f;
+  --available-text: #d6f5e1;
+  --occupied-fill: #4a4740;
+  --occupied-stroke: #4a4740;
+  --occupied-text: #e2ded4;
+  --reserved-fill: #b8901f;
+  --reserved-stroke: #e0b53f;
+  --reserved-text: #1c1600;
+  --not_in_use-fill: #2e2c28;
+  --not_in_use-stroke: #3b3833;
+  --not_in_use-text: #7c776d;
+  color-scheme: dark;
 }
 
 * {
@@ -70,13 +144,13 @@ button.primary,
 .button.primary {
   background: var(--accent);
   border-color: var(--accent);
-  color: #fff;
+  color: var(--on-accent);
 }
 
 button.danger {
   background: var(--danger);
   border-color: var(--danger);
-  color: #fff;
+  color: var(--on-accent);
 }
 
 button:focus-visible,
@@ -458,7 +532,7 @@ input:not([type="checkbox"]) {
 }
 
 .count[data-status="available"] strong {
-  color: #1f7145;
+  color: var(--good);
 }
 
 .count span {
@@ -578,6 +652,7 @@ td:first-child {
 
 .tool-options > button {
   flex: 1;
+  padding: 8px 4px;
   font-size: 0.85rem;
 }
 
@@ -605,7 +680,113 @@ td:first-child {
   padding: 10px 14px;
   border-radius: 6px;
   background: var(--ink);
-  color: #fff;
+  color: var(--paper);
   font-size: 0.9rem;
   z-index: 10;
+}
+
+/* Accounts */
+.account {
+  display: grid;
+  justify-items: start;
+  gap: 10px;
+  margin-top: 32px;
+  padding-top: 16px;
+  border-top: 1px solid var(--line);
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+.editor .account {
+  margin: 0 0 16px;
+  padding: 0;
+  border: 0;
+}
+
+.account.signed-in {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.account strong {
+  color: var(--ink);
+}
+
+.notice-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.tag {
+  margin-left: 8px;
+  color: var(--muted);
+  font-size: 0.75rem;
+}
+
+.home-footer {
+  margin-top: 32px;
+}
+
+/* Find seats together */
+.finding .seat:not(.lit) {
+  opacity: 0.3;
+}
+
+.seat .ring {
+  stroke: var(--ring);
+}
+
+.find-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 10px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid var(--line);
+  font-size: 0.85rem;
+}
+
+.find-bar .stepper {
+  gap: 6px;
+}
+
+.find-bar .stepper button {
+  width: 40px;
+  min-height: 40px;
+}
+
+.find-bar .find-result {
+  flex: 1;
+  color: var(--muted);
+}
+
+.find-bar > button {
+  min-height: 40px;
+}
+
+/* Display switch */
+.theme-switch {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.875rem;
+  color: var(--muted);
+}
+
+.theme-switch span {
+  margin-right: 4px;
+}
+
+.theme-switch button {
+  min-height: 36px;
+  padding: 4px 12px;
+  font-size: 0.85rem;
+}
+
+.theme-switch button[aria-checked="true"] {
+  border-color: var(--ink);
+  box-shadow: inset 0 0 0 1px var(--ink);
 }

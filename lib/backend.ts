@@ -1,4 +1,4 @@
-import { createClient, type SupabaseClient } from "@supabase/supabase-js";
+import { createClient, type SupabaseClient, type User } from "@supabase/supabase-js";
 import type { Layout, SeatMapState } from "./layout";
 
 const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
@@ -9,7 +9,12 @@ const key = process.env.NEXT_PUBLIC_SUPABASE_KEY;
 export const usingDevBackend = !url || !key;
 
 let client: SupabaseClient | null = null;
-const supabase = () => (client ??= createClient(url!, key!, { auth: { persistSession: false } }));
+// The session is kept so a signed-in user stays signed in. PKCE is the safer sign-in
+// flow for browser apps: the sign-in code in the address bar is useless on its own.
+const supabase = () =>
+  (client ??= createClient(url!, key!, {
+    auth: { persistSession: true, flowType: "pkce", detectSessionInUrl: true },
+  }));
 
 async function rpc<T>(fn: string, args: Record<string, unknown>): Promise<T> {
   if (!usingDevBackend) {
@@ -32,8 +37,8 @@ async function rpc<T>(fn: string, args: Record<string, unknown>): Promise<T> {
   return body.data as T;
 }
 
-export type TemplateData = { name: string; layout: Layout };
-export type RoomData = TemplateData & { code: string; seats: SeatMapState; extra: number };
+export type TemplateData = { name: string; layout: Layout; owned?: boolean; ownedByOther?: boolean };
+export type RoomData = { name: string; layout: Layout; code: string; seats: SeatMapState; extra: number };
 export type RoomPatch = { seats?: SeatMapState; replaceSeats?: SeatMapState; extra?: number };
 
 export const api = {
@@ -50,6 +55,33 @@ export const api = {
     rpc<{ extra: number } | null>("add_extra", { p_code: code, p_delta: delta }),
   resetRoom: (code: string) =>
     rpc<{ seats: SeatMapState; extra: number } | null>("reset_room", { p_code: code }),
+  myTemplates: () => rpc<{ token: string; name: string }[]>("my_templates", {}),
+  claimTemplate: (token: string) => rpc<{ ok: boolean } | null>("claim_template", { p_token: token }),
+};
+
+/** Signing in is optional and only exists with real Supabase, not the local stand-in. */
+export const accountsAvailable = !usingDevBackend;
+
+export const account = {
+  /** Calls back with the current user straight away, then on every sign-in or sign-out. */
+  watch(callback: (user: User | null) => void) {
+    const { data } = supabase().auth.onAuthStateChange((_event, session) => {
+      callback(session?.user ?? null);
+      // Tidy the one-time sign-in code out of the address bar once it has been used.
+      const address = new URL(window.location.href);
+      if (session && address.searchParams.has("code")) {
+        address.searchParams.delete("code");
+        window.history.replaceState(null, "", address);
+      }
+    });
+    return () => data.subscription.unsubscribe();
+  },
+  signInWithGoogle: () =>
+    supabase().auth.signInWithOAuth({
+      provider: "google",
+      options: { redirectTo: window.location.origin + window.location.pathname },
+    }),
+  signOut: () => supabase().auth.signOut(),
 };
 
 type RoomEvents = {

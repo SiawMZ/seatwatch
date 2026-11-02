@@ -11,6 +11,9 @@ import {
   type Status,
 } from "@/lib/layout";
 
+/** Seat colours come from CSS so they follow light and dark mode. The JPG uses STATUS_META instead. */
+export const statusColor = (status: Status, part: "fill" | "stroke" | "text") => `var(--${status}-${part})`;
+
 export const MIN_ZOOM = 1;
 export const MAX_ZOOM = 4;
 export const clampZoom = (zoom: number) => Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, zoom));
@@ -24,6 +27,8 @@ type Props = {
   dragMode?: boolean;
   onDragEnd?: (seats: Seat[]) => void;
   onDragMove?: (seats: Seat[]) => void;
+  /** Seats to point out, for example where a group fits. Every other seat is faded. */
+  highlight?: Set<string> | null;
   /** 1 fits the map to the width of its box. Leave both out to let the map keep its own zoom. */
   zoom?: number;
   onZoomChange?: (zoom: number) => void;
@@ -37,6 +42,7 @@ export function SeatMap({
   dragMode = false,
   onDragEnd,
   onDragMove,
+  highlight = null,
   zoom: controlledZoom,
   onZoomChange,
 }: Props) {
@@ -199,17 +205,18 @@ export function SeatMap({
         ref={svg}
         viewBox={`0 0 ${layout.width} ${layout.height}`}
         style={{ width: `${zoom * 100}%` }}
+        className={highlight ? "finding" : undefined}
         role="group"
         aria-label="Seat map"
         {...dragHandlers}
       >
-        <rect x={stage.x} y={stage.y} width={stage.w} height={stage.h} fill="#e4e0d6" />
+        <rect x={stage.x} y={stage.y} width={stage.w} height={stage.h} fill="var(--stage)" />
         <text
           x={stage.x + stage.w / 2}
           y={stage.y + stage.h / 2}
           fontSize={0.6}
           fontWeight={700}
-          fill="#77736a"
+          fill="var(--muted)"
           textAnchor="middle"
           dominantBaseline="central"
         >
@@ -225,7 +232,7 @@ export function SeatMap({
               y={p.y + 0.4}
               fontSize={0.5}
               fontWeight={700}
-              fill="#77736a"
+              fill="var(--muted)"
               textAnchor="middle"
               dominantBaseline="central"
             >
@@ -258,10 +265,11 @@ export function SeatMap({
         {layout.seats.map((seat) => {
           const status = statusFor(seat);
           const meta = STATUS_META[status];
+          const lit = highlight?.has(seat.id);
           return (
             <g
               key={seat.id}
-              className="seat"
+              className={lit ? "seat lit" : "seat"}
               data-seat={seat.id}
               data-status={seat.removed ? "removed" : status}
               onClick={dragMode ? undefined : () => onSeatTap(seat)}
@@ -274,18 +282,30 @@ export function SeatMap({
                 width={0.84}
                 height={0.84}
                 rx={0.16}
-                fill={seat.removed ? "none" : meta.fill}
-                stroke={seat.removed ? "#b9b4a8" : meta.stroke}
+                fill={seat.removed ? "none" : statusColor(status, "fill")}
+                stroke={seat.removed ? "var(--line)" : statusColor(status, "stroke")}
                 strokeWidth={0.05}
                 strokeDasharray={seat.removed ? "0.12 0.12" : undefined}
               />
+              {lit && (
+                <rect
+                  className="ring"
+                  x={seat.x + 0.02}
+                  y={seat.y + 0.02}
+                  width={0.96}
+                  height={0.96}
+                  rx={0.2}
+                  fill="none"
+                  strokeWidth={0.1}
+                />
+              )}
               {!seat.removed && meta.glyph && (
                 <text
                   x={seat.x + 0.5}
                   y={seat.y + 0.52}
                   fontSize={0.55}
                   fontWeight={700}
-                  fill={meta.text}
+                  fill={statusColor(status, "text")}
                   textAnchor="middle"
                   dominantBaseline="central"
                 >

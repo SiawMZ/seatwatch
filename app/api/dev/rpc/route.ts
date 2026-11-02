@@ -15,7 +15,16 @@ const ALLOWED = new Set([
   "add_extra",
   "reset_room",
   "cleanup_rooms",
+  "claim_template",
+  "my_templates",
 ]);
+
+// The bits of Supabase's sign-in system that schema.sql refers to. Nobody is ever signed in here.
+const AUTH_STAND_IN = `
+  create schema if not exists auth;
+  create table if not exists auth.users (id uuid primary key);
+  create or replace function auth.uid() returns uuid language sql stable as 'select null::uuid';
+`;
 
 const store = globalThis as unknown as {
   devDb?: Promise<PGlite>;
@@ -26,6 +35,7 @@ function database() {
   store.devDb ??= (async () => {
     const { PGlite } = await import("@electric-sql/pglite");
     const db = new PGlite();
+    await db.exec(AUTH_STAND_IN);
     await db.exec(await readFile(path.join(process.cwd(), "supabase", "schema.sql"), "utf8"));
     return db;
   })();
@@ -54,7 +64,7 @@ export async function POST(request: Request) {
   try {
     const db = await database();
     const names = Object.keys(args);
-    if (names.some((name) => !/^p_[a-z]+$/.test(name))) {
+    if (names.some((name) => !/^p_[a-z_]+$/.test(name))) {
       return Response.json({ error: "Bad argument" }, { status: 400 });
     }
     const list = names.map((name, i) => `${name} => $${i + 1}`).join(", ");

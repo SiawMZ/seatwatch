@@ -32,6 +32,20 @@ Stop it with `npx supabase stop`.
 5. Deploy to Vercel with the same variables. `vercel.json` adds a daily job that removes
    abandoned rooms and keeps the free database from pausing.
 
+## Optional Google sign-in
+
+Signing in keeps a person's templates in their account. Ushers never need it.
+
+1. In Google Cloud Console, create an OAuth client (type: Web application) with this
+   authorised redirect URI: `https://<your-project>.supabase.co/auth/v1/callback`.
+2. In Supabase, under Authentication, then Sign In / Providers, turn on Google and paste the
+   client ID and secret.
+3. In Supabase, under Authentication, then URL Configuration, set the Site URL to the live
+   site and add `https://<your-site>/**` to the redirect URLs (plus `http://localhost:3457/**`
+   for local testing).
+
+After pulling an update, run `supabase/schema.sql` again in the SQL editor. It's safe to re-run.
+
 ## How it's organised
 
 - `lib/layout.ts`: turns sections into a flat list of seats. New arrangements only need a new generator.

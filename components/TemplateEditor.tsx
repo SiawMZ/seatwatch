@@ -3,7 +3,7 @@
 import { useMemo, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { api } from "@/lib/backend";
+import { accountsAvailable, api } from "@/lib/backend";
 import {
   DOORS,
   generateLayout,
@@ -14,6 +14,8 @@ import {
   type SectionConfig,
 } from "@/lib/layout";
 import { rememberTemplate } from "@/lib/saved-templates";
+import { useAccount } from "@/lib/use-account";
+import { AccountBar } from "./AccountBar";
 import { SeatMap } from "./SeatMap";
 
 const newSection = (index: number, id: string): SectionConfig => ({
@@ -30,10 +32,20 @@ type Props = {
   token?: string;
   initialName?: string;
   initialConfig?: LayoutConfig;
+  owned?: boolean;
+  ownedByOther?: boolean;
 };
 
-export function TemplateEditor({ token, initialName = "Sunday service", initialConfig }: Props) {
+export function TemplateEditor({
+  token,
+  initialName = "Sunday service",
+  initialConfig,
+  owned = false,
+  ownedByOther = false,
+}: Props) {
   const router = useRouter();
+  const { user, ready } = useAccount();
+  const [claimed, setClaimed] = useState(false);
   const [name, setName] = useState(initialName);
   const [config, setConfig] = useState<LayoutConfig>(
     () =>
@@ -121,6 +133,15 @@ export function TemplateEditor({ token, initialName = "Sunday service", initialC
     setTimeout(() => setCopied(false), 2000);
   };
 
+  const addToAccount = () =>
+    run(async () => {
+      const result = await api.claimTemplate(token!);
+      if (!result?.ok) throw new Error("Couldn't add it. It may already be in another account.");
+      setClaimed(true);
+    });
+
+  const inMyAccount = owned || claimed;
+
   return (
     <main className="page editor">
       <header className="page-header">
@@ -133,13 +154,38 @@ export function TemplateEditor({ token, initialName = "Sunday service", initialC
       {token && (
         <section className="notice">
           <div>
-            <strong>Keep this page&apos;s link.</strong> It&apos;s the only way back to this template, and anyone
-            who has it can edit.
+            {inMyAccount ? (
+              <>
+                <strong>Saved in your account.</strong> You&apos;ll find it on the start page whenever
+                you&apos;re signed in. Anyone with this page&apos;s link can also edit it.
+              </>
+            ) : (
+              <>
+                <strong>Keep this page&apos;s link.</strong> It&apos;s the only way back to this template, and
+                anyone who has it can edit.
+                {ownedByOther && " This template belongs to someone else's account."}
+              </>
+            )}
           </div>
-          <button type="button" onClick={copyLink}>
-            {copied ? "Copied" : "Copy link"}
-          </button>
+          <div className="notice-actions">
+            {accountsAvailable && ready && user && !inMyAccount && !ownedByOther && (
+              <button type="button" onClick={addToAccount} disabled={busy}>
+                Add to my account
+              </button>
+            )}
+            <button type="button" onClick={copyLink}>
+              {copied ? "Copied" : "Copy link"}
+            </button>
+          </div>
         </section>
+      )}
+
+      {token && !inMyAccount && !ownedByOther && (
+        <AccountBar
+          user={user}
+          ready={ready}
+          signedOutText="Sign in to keep this template in your account, so you don't need the link."
+        />
       )}
 
       <div className="editor-grid">

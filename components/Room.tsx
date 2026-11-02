@@ -6,6 +6,8 @@ import QRCode from "qrcode";
 import { api, connectRoom, type RoomData, type RoomPatch } from "@/lib/backend";
 import { downloadRoomJpg } from "@/lib/export-jpg";
 import {
+  findTogether,
+  pickGroup,
   STATUS_META,
   STATUSES,
   statusOf,
@@ -15,10 +17,14 @@ import {
   type SeatMapState,
   type Status,
 } from "@/lib/layout";
-import { clampZoom, MAX_ZOOM, MIN_ZOOM, SeatMap } from "./SeatMap";
+import { clampZoom, MAX_ZOOM, MIN_ZOOM, SeatMap, statusColor } from "./SeatMap";
+import { ThemeSwitch } from "./ThemeSwitch";
 
 const REFRESH_MS = 30_000;
 const ZOOM_STEP = 1.5;
+const UNDO_LIMIT = 30;
+const GROUP_MAX = 12;
+const NO_SEATS: SeatMapState = {};
 
 export function Room({ code }: { code: string }) {
   const [room, setRoom] = useState<RoomData | null>(null);
@@ -34,6 +40,10 @@ export function Room({ code }: { code: string }) {
   const [qr, setQr] = useState("");
   const [confirmReset, setConfirmReset] = useState(false);
   const [message, setMessage] = useState("");
+  /** Size of the group being seated, while "Find" is open. */
+  const [groupSize, setGroupSize] = useState<number | null>(null);
+  // Only this phone's own marks can be undone. Each entry holds what the seats were before.
+  const [history, setHistory] = useState<SeatMapState[]>([]);
 
   const link = useRef<ReturnType<typeof connectRoom> | null>(null);
   // Counts local changes, so a slower read that started earlier can't undo them on screen.
@@ -92,8 +102,18 @@ export function Room({ code }: { code: string }) {
     setTimeout(() => setMessage(""), 2500);
   };
 
-  const commit = async (patch: SeatMapState) => {
+  const seats = room?.seats ?? NO_SEATS;
+  const found = useMemo(
+    () => (room && groupSize ? findTogether(room.layout, room.seats, groupSize) : null),
+    [room, groupSize],
+  );
+
+  const commit = async (patch: SeatMapState, { undoable = true } = {}) => {
     if (Object.keys(patch).length === 0) return;
+    if (undoable) {
+      const before = Object.fromEntries(Object.keys(patch).map((id) => [id, statusOf(seats, id)]));
+      setHistory((list) => [...list, before].slice(-UNDO_LIMIT));
+    }
     changeCount.current++;
     pending.current++;
     setRoom((current) => (current ? applyPatch(current, { seats: patch }) : current));
@@ -109,9 +129,22 @@ export function Room({ code }: { code: string }) {
     }
   };
 
-  const seats = useMemo(() => room?.seats ?? {}, [room]);
+  const undo = () => {
+    const last = history[history.length - 1];
+    if (!last) return;
+    setHistory((list) => list.slice(0, -1));
+    commit(last, { undoable: false });
+    flash("Undone");
+  };
 
   const tapSeat = (seat: Seat) => {
+    // While finding seats, tapping a highlighted stretch seats the whole group at once.
+    const run = found?.runs.find((r) => r.includes(seat));
+    if (run && groupSize) {
+      const status = tool === "available" ? "occupied" : tool;
+      commit(Object.fromEntries(pickGroup(run, seat, groupSize).map((s) => [s.id, status])));
+      return;
+    }
     commit({ [seat.id]: statusOf(seats, seat.id) === tool ? "available" : tool });
   };
 
@@ -166,6 +199,7 @@ export function Room({ code }: { code: string }) {
       const result = await api.resetRoom(code);
       if (!result) return setGone(true);
       const patch = { replaceSeats: result.seats, extra: result.extra };
+      setHistory([]);
       changeCount.current++;
       setRoom((current) => (current ? applyPatch(current, patch) : current));
       link.current?.broadcast(patch);
@@ -267,6 +301,7 @@ export function Room({ code }: { code: string }) {
           setDragPreview([]);
           paint(list);
         }}
+        highlight={found?.seatIds ?? null}
         zoom={zoom}
         onZoomChange={setZoom}
       />
@@ -346,8 +381,10 @@ export function Room({ code }: { code: string }) {
             </p>
             <p className="hint">
               Tips: the number beside each row is its available seats, and tapping it marks the whole row.
-              Pinch the map with two fingers to zoom.
+              Pinch the map with two fingers to zoom. Use Find to see where a group can sit together, then
+              tap a highlighted seat to mark the whole group.
             </p>
+            <ThemeSwitch />
           </section>
         </div>
       )}
@@ -359,6 +396,36 @@ export function Room({ code }: { code: string }) {
       )}
 
       <nav className="toolbar" aria-label="Marking tools">
+        {groupSize !== null && found && (
+          <div className="find-bar" role="status">
+            <span>Seats together</span>
+            <div className="stepper">
+              <button
+                type="button"
+                aria-label="Smaller group"
+                disabled={groupSize <= 2}
+                onClick={() => setGroupSize((size) => Math.max(2, (size ?? 2) - 1))}
+              >
+                −
+              </button>
+              <strong>{groupSize}</strong>
+              <button
+                type="button"
+                aria-label="Bigger group"
+                disabled={groupSize >= GROUP_MAX}
+                onClick={() => setGroupSize((size) => Math.min(GROUP_MAX, (size ?? 2) + 1))}
+              >
+                +
+              </button>
+            </div>
+            <span className="find-result">
+              {found.rows === 0 ? "No row fits" : `Fits in ${found.rows} ${found.rows === 1 ? "row" : "rows"}`}
+            </span>
+            <button type="button" onClick={() => setGroupSize(null)}>
+              Done
+            </button>
+          </div>
+        )}
         <div className="tools">
           {STATUSES.map((status) => {
             const meta = STATUS_META[status];
@@ -370,7 +437,14 @@ export function Room({ code }: { code: string }) {
                 aria-pressed={tool === status}
                 onClick={() => setTool(status)}
               >
-                <span className="swatch" style={{ background: meta.fill, borderColor: meta.stroke, color: meta.text }}>
+                <span
+                  className="swatch"
+                  style={{
+                    background: statusColor(status, "fill"),
+                    borderColor: statusColor(status, "stroke"),
+                    color: statusColor(status, "text"),
+                  }}
+                >
                   {meta.glyph}
                 </span>
                 {meta.label}
@@ -380,7 +454,17 @@ export function Room({ code }: { code: string }) {
         </div>
         <div className="tool-options">
           <button type="button" aria-pressed={dragMode} onClick={() => setDragMode(!dragMode)}>
-            {dragMode ? "Drag to mark: on" : "Drag to mark: off"}
+            Drag
+          </button>
+          <button
+            type="button"
+            aria-pressed={groupSize !== null}
+            onClick={() => setGroupSize(groupSize === null ? 2 : null)}
+          >
+            Find
+          </button>
+          <button type="button" onClick={undo} disabled={history.length === 0}>
+            Undo
           </button>
           <div className="zoom">
             <button

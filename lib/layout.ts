@@ -153,6 +153,45 @@ export function rowsOf(layout: Layout) {
   return [...rows.entries()].map(([id, seats]) => ({ id, seats }));
 }
 
+/** Unbroken stretches of available seats within each row. A removed seat or a busy one breaks a stretch. */
+export function availableRuns(layout: Layout, seats: SeatMapState) {
+  const runs: Seat[][] = [];
+  for (const row of rowsOf(layout)) {
+    let run: Seat[] = [];
+    for (const seat of [...row.seats].sort((a, b) => a.x - b.x)) {
+      // Positions can carry tiny rounding errors, so "next seat along" allows a little slack.
+      const joins = run.length > 0 && Math.abs(seat.x - run[run.length - 1].x - 1) < 0.01;
+      if (statusOf(seats, seat.id) !== "available") {
+        if (run.length) runs.push(run);
+        run = [];
+      } else if (joins || run.length === 0) {
+        run.push(seat);
+      } else {
+        runs.push(run);
+        run = [seat];
+      }
+    }
+    if (run.length) runs.push(run);
+  }
+  return runs;
+}
+
+/** Where a group of `size` people can sit side by side. */
+export function findTogether(layout: Layout, seats: SeatMapState, size: number) {
+  const runs = availableRuns(layout, seats).filter((run) => run.length >= size);
+  return {
+    runs,
+    seatIds: new Set(runs.flat().map((s) => s.id)),
+    rows: new Set(runs.map((run) => run[0].row)).size,
+  };
+}
+
+/** The `size` seats to give a group, starting from the tapped seat and shifting left near the end of a stretch. */
+export function pickGroup(run: Seat[], seat: Seat, size: number) {
+  const start = Math.min(run.indexOf(seat), run.length - size);
+  return run.slice(start, start + size);
+}
+
 export function formatStamp(date: Date) {
   return date.toLocaleString("en-MY", {
     weekday: "short",

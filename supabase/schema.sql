@@ -1,6 +1,7 @@
--- Seatwatch database. Run this once in the Supabase SQL editor.
+-- Seatwatch database. Run all of this in the Supabase SQL editor. It is safe to run again
+-- after an update: it only adds what is missing and replaces the functions.
 -- Tables have row level security on and no policies, so the browser can only
--- reach data through the functions below, which require a link token or room code.
+-- reach data through the functions below, which require a link token, room code or sign-in.
 
 create table if not exists templates (
   id uuid primary key default gen_random_uuid(),
@@ -20,6 +21,11 @@ create table if not exists rooms (
   created_at timestamptz not null default now(),
   last_seen_at timestamptz not null default now()
 );
+
+-- Signing in is optional. A signed-in user's templates are kept in their account,
+-- so they don't depend on the edit link alone.
+alter table templates add column if not exists owner_id uuid references auth.users (id) on delete set null;
+create index if not exists templates_owner_idx on templates (owner_id);
 
 alter table templates enable row level security;
 alter table rooms enable row level security;
@@ -50,15 +56,40 @@ language plpgsql security definer set search_path = public as $$
 declare v_token uuid;
 begin
   perform check_template(p_name, p_layout);
-  insert into templates (name, layout) values (trim(p_name), p_layout)
+  insert into templates (name, layout, owner_id) values (trim(p_name), p_layout, auth.uid())
   returning edit_token into v_token;
   return jsonb_build_object('token', v_token);
 end $$;
 
 create or replace function get_template(p_token uuid) returns jsonb
 language sql security definer set search_path = public as $$
-  select jsonb_build_object('name', name, 'layout', layout)
+  select jsonb_build_object(
+    'name', name,
+    'layout', layout,
+    'owned', auth.uid() is not null and owner_id is not distinct from auth.uid(),
+    'ownedByOther', owner_id is not null and owner_id is distinct from auth.uid()
+  )
   from templates where edit_token = p_token
+$$;
+
+-- Adds a template made before signing in to the signed-in user's account.
+-- A template already in someone else's account stays theirs.
+create or replace function claim_template(p_token uuid) returns jsonb
+language plpgsql security definer set search_path = public as $$
+begin
+  if auth.uid() is null then return null; end if;
+  update templates set owner_id = auth.uid()
+  where edit_token = p_token and (owner_id is null or owner_id = auth.uid());
+  return jsonb_build_object('ok', found);
+end $$;
+
+create or replace function my_templates() returns jsonb
+language sql security definer set search_path = public as $$
+  select coalesce(
+    jsonb_agg(jsonb_build_object('token', edit_token, 'name', name) order by updated_at desc),
+    '[]'::jsonb
+  )
+  from templates where auth.uid() is not null and owner_id = auth.uid()
 $$;
 
 create or replace function update_template(p_token uuid, p_name text, p_layout jsonb) returns jsonb
