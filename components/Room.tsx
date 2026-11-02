@@ -15,10 +15,10 @@ import {
   type SeatMapState,
   type Status,
 } from "@/lib/layout";
-import { SeatMap } from "./SeatMap";
+import { clampZoom, MAX_ZOOM, MIN_ZOOM, SeatMap } from "./SeatMap";
 
 const REFRESH_MS = 30_000;
-const ZOOMS = [null, 22, 30, 40] as const;
+const ZOOM_STEP = 1.5;
 
 export function Room({ code }: { code: string }) {
   const [room, setRoom] = useState<RoomData | null>(null);
@@ -28,8 +28,9 @@ export function Room({ code }: { code: string }) {
   const [tool, setTool] = useState<Status>("occupied");
   const [dragMode, setDragMode] = useState(false);
   const [dragPreview, setDragPreview] = useState<Seat[]>([]);
-  const [zoom, setZoom] = useState(0);
+  const [zoom, setZoom] = useState(1);
   const [shareOpen, setShareOpen] = useState(false);
+  const [reportOpen, setReportOpen] = useState(false);
   const [qr, setQr] = useState("");
   const [confirmReset, setConfirmReset] = useState(false);
   const [message, setMessage] = useState("");
@@ -220,9 +221,14 @@ export function Room({ code }: { code: string }) {
             {connected ? `${online} here` : "Reconnecting…"}
           </div>
         </div>
-        <button type="button" onClick={() => setShareOpen(!shareOpen)} aria-expanded={shareOpen}>
-          Invite · <span className="code">{room.code}</span>
-        </button>
+        <div className="room-actions">
+          <button type="button" onClick={() => setReportOpen(true)}>
+            Report
+          </button>
+          <button type="button" onClick={() => setShareOpen(!shareOpen)} aria-expanded={shareOpen}>
+            Invite · <span className="code">{room.code}</span>
+          </button>
+        </div>
       </header>
 
       {shareOpen && (
@@ -261,70 +267,90 @@ export function Room({ code }: { code: string }) {
           setDragPreview([]);
           paint(list);
         }}
-        cellPx={ZOOMS[zoom]}
+        zoom={zoom}
+        onZoomChange={setZoom}
       />
-      <p className="hint legend-hint">
-        The number beside each row is its available seats. Tap it to mark the whole row.
-      </p>
 
-      <section className="report">
-        <div className="attendance">
-          <div>
-            <h2>Attendance: {counts.occupied + room.extra}</h2>
+      {reportOpen && (
+        <div className="sheet" role="dialog" aria-modal="true" aria-label="Report">
+          <div className="sheet-header">
+            <h2>Report</h2>
+            <button type="button" onClick={() => setReportOpen(false)}>
+              Close
+            </button>
+          </div>
+          <section className="report">
+            <div className="attendance">
+              <div>
+                <h2>Attendance: {counts.occupied + room.extra}</h2>
+                <p className="hint">
+                  {counts.occupied} seated + {room.extra} extra (standing, children on laps)
+                </p>
+              </div>
+              <div className="stepper">
+                <button
+                  type="button"
+                  aria-label="One fewer extra"
+                  onClick={() => changeExtra(-1)}
+                  disabled={room.extra === 0}
+                >
+                  −
+                </button>
+                <span>{room.extra}</span>
+                <button type="button" aria-label="One more extra" onClick={() => changeExtra(1)}>
+                  +
+                </button>
+              </div>
+            </div>
+
+            <table>
+              <thead>
+                <tr>
+                  <th>Section</th>
+                  <th>Available</th>
+                  <th>Occupied</th>
+                  <th>Reserved</th>
+                </tr>
+              </thead>
+              <tbody>
+                {groups.map((group) => (
+                  <tr key={group.name}>
+                    <td>{group.name}</td>
+                    <td>{group.counts.available}</td>
+                    <td>{group.counts.occupied}</td>
+                    <td>{group.counts.reserved}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+
+            <div className="report-actions">
+              <button type="button" className="primary" onClick={() => downloadRoomJpg(room)}>
+                Save JPG
+              </button>
+              <button
+                type="button"
+                onClick={() =>
+                  copy(summaryText(room.name, room.layout, seats, room.extra, new Date()), "Summary copied")
+                }
+              >
+                Copy summary
+              </button>
+              <button type="button" className={confirmReset ? "danger" : ""} onClick={reset}>
+                {confirmReset ? "Tap again to clear all seats" : "Reset for next service"}
+              </button>
+            </div>
             <p className="hint">
-              {counts.occupied} seated + {room.extra} extra (standing, children on laps)
+              Nothing is kept after this room ends. It clears 2 hours after everyone leaves, so save a JPG
+              first.
             </p>
-          </div>
-          <div className="stepper">
-            <button type="button" aria-label="One fewer extra" onClick={() => changeExtra(-1)} disabled={room.extra === 0}>
-              −
-            </button>
-            <span>{room.extra}</span>
-            <button type="button" aria-label="One more extra" onClick={() => changeExtra(1)}>
-              +
-            </button>
-          </div>
+            <p className="hint">
+              Tips: the number beside each row is its available seats, and tapping it marks the whole row.
+              Pinch the map with two fingers to zoom.
+            </p>
+          </section>
         </div>
-
-        <table>
-          <thead>
-            <tr>
-              <th>Section</th>
-              <th>Available</th>
-              <th>Occupied</th>
-              <th>Reserved</th>
-            </tr>
-          </thead>
-          <tbody>
-            {groups.map((group) => (
-              <tr key={group.name}>
-                <td>{group.name}</td>
-                <td>{group.counts.available}</td>
-                <td>{group.counts.occupied}</td>
-                <td>{group.counts.reserved}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-
-        <div className="report-actions">
-          <button type="button" className="primary" onClick={() => downloadRoomJpg(room)}>
-            Save JPG
-          </button>
-          <button
-            type="button"
-            onClick={() => copy(summaryText(room.name, room.layout, seats, room.extra, new Date()), "Summary copied")}
-          >
-            Copy summary
-          </button>
-          <button type="button" className={confirmReset ? "danger" : ""} onClick={reset}>
-            {confirmReset ? "Tap again to clear all seats" : "Reset for next service"}
-          </button>
-        </div>
-        <p className="hint">
-          Nothing is kept after this room ends. It clears 2 hours after everyone leaves, so save a JPG first.
-        </p>
-      </section>
+      )}
 
       {message && (
         <div className="toast" role="status">
@@ -357,14 +383,19 @@ export function Room({ code }: { code: string }) {
             {dragMode ? "Drag to mark: on" : "Drag to mark: off"}
           </button>
           <div className="zoom">
-            <button type="button" aria-label="Zoom out" disabled={zoom === 0} onClick={() => setZoom(zoom - 1)}>
+            <button
+              type="button"
+              aria-label="Zoom out"
+              disabled={zoom <= MIN_ZOOM}
+              onClick={() => setZoom(clampZoom(zoom / ZOOM_STEP))}
+            >
               −
             </button>
             <button
               type="button"
               aria-label="Zoom in"
-              disabled={zoom === ZOOMS.length - 1}
-              onClick={() => setZoom(zoom + 1)}
+              disabled={zoom >= MAX_ZOOM}
+              onClick={() => setZoom(clampZoom(zoom * ZOOM_STEP))}
             >
               +
             </button>
