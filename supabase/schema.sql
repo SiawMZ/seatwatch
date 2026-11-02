@@ -83,6 +83,16 @@ begin
   return jsonb_build_object('ok', found);
 end $$;
 
+-- Only the signed-in owner can delete, so a shared edit link can't be used to wipe a template.
+-- Rooms already open keep their own copy of the layout and carry on.
+create or replace function delete_template(p_token uuid) returns jsonb
+language plpgsql security definer set search_path = public as $$
+begin
+  if auth.uid() is null then return null; end if;
+  delete from templates where edit_token = p_token and owner_id = auth.uid();
+  return jsonb_build_object('ok', found);
+end $$;
+
 create or replace function my_templates() returns jsonb
 language sql security definer set search_path = public as $$
   select coalesce(

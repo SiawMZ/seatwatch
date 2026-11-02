@@ -17,6 +17,7 @@ const ALLOWED = new Set([
   "cleanup_rooms",
   "claim_template",
   "my_templates",
+  "delete_template",
 ]);
 
 // The bits of Supabase's sign-in system that schema.sql refers to. Nobody is ever signed in here.

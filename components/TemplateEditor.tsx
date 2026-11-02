@@ -17,7 +17,7 @@ import {
   type SectionConfig,
   type SectionKind,
 } from "@/lib/layout";
-import { rememberTemplate } from "@/lib/saved-templates";
+import { forgetTemplate, rememberTemplate } from "@/lib/saved-templates";
 import { useAccount } from "@/lib/use-account";
 import { AccountBar } from "./AccountBar";
 import { SeatMap } from "./SeatMap";
@@ -220,6 +220,26 @@ export function TemplateEditor({
 
   const inMyAccount = owned || claimed;
 
+  const [confirmDelete, setConfirmDelete] = useState(false);
+  const deleteTemplate = () => {
+    if (!confirmDelete) {
+      setConfirmDelete(true);
+      setTimeout(() => setConfirmDelete(false), 4000);
+      return;
+    }
+    run(async () => {
+      const result = await api.deleteTemplate(token!);
+      if (!result?.ok) throw new Error("Couldn't delete it. Only the account that owns it can.");
+      forgetTemplate(token!);
+      router.push("/");
+    });
+  };
+
+  const removeFromPhone = () => {
+    forgetTemplate(token!);
+    router.push("/");
+  };
+
   return (
     <main className="page editor">
       <header className="page-header">
@@ -388,6 +408,34 @@ export function TemplateEditor({
               </label>
             ))}
           </div>
+
+          {token && (
+            <section className="danger-zone">
+              {inMyAccount ? (
+                <>
+                  <button
+                    type="button"
+                    className={confirmDelete ? "danger" : ""}
+                    onClick={deleteTemplate}
+                    disabled={busy}
+                  >
+                    {confirmDelete ? "Tap again to delete for good" : "Delete template"}
+                  </button>
+                  <p className="hint">Rooms already open from it keep working until they end.</p>
+                </>
+              ) : (
+                <>
+                  <button type="button" onClick={removeFromPhone}>
+                    Remove from this phone
+                  </button>
+                  <p className="hint">
+                    Takes it off this phone&apos;s list only. Anyone with the link can still open it.
+                    {accountsAvailable && !ownedByOther && " To delete it, add it to your account first."}
+                  </p>
+                </>
+              )}
+            </section>
+          )}
         </div>
 
         <div className="editor-preview">

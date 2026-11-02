@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import QRCode from "qrcode";
 import { api, connectRoom, type RoomData, type RoomPatch } from "@/lib/backend";
 import { downloadRoomJpg } from "@/lib/export-jpg";
@@ -37,6 +38,8 @@ export function Room({ code }: { code: string }) {
   const [zoom, setZoom] = useState(1);
   const [shareOpen, setShareOpen] = useState(false);
   const [reportOpen, setReportOpen] = useState(false);
+  const [leaveOpen, setLeaveOpen] = useState(false);
+  const router = useRouter();
   const [qr, setQr] = useState("");
   const [confirmReset, setConfirmReset] = useState(false);
   const [message, setMessage] = useState("");
@@ -209,6 +212,12 @@ export function Room({ code }: { code: string }) {
     }
   };
 
+  // Leaving only disconnects this phone. If others are still here, nothing else needs saying.
+  const leave = () => {
+    if (connected && online > 1) router.push("/");
+    else setLeaveOpen(true);
+  };
+
   const copy = async (text: string, done: string) => {
     try {
       await navigator.clipboard.writeText(text);
@@ -248,11 +257,16 @@ export function Room({ code }: { code: string }) {
   return (
     <main className="room">
       <header className="room-header">
-        <div className="room-title">
-          <h1>{room.name}</h1>
-          <div className="room-meta">
-            <span className={connected ? "dot live" : "dot"} />
-            {connected ? `${online} here` : "Reconnecting…"}
+        <div className="room-title-row">
+          <button type="button" className="leave" aria-label="Leave room" onClick={leave}>
+            ‹
+          </button>
+          <div className="room-title">
+            <h1>{room.name}</h1>
+            <div className="room-meta">
+              <span className={connected ? "dot live" : "dot"} />
+              {connected ? `${online} here` : "Reconnecting…"}
+            </div>
           </div>
         </div>
         <div className="room-actions">
@@ -386,6 +400,27 @@ export function Room({ code }: { code: string }) {
             </p>
             <ThemeSwitch />
           </section>
+        </div>
+      )}
+
+      {leaveOpen && (
+        <div className="leave-panel" role="dialog" aria-label="Leave room">
+          <strong>You&apos;re the last one here</strong>
+          <p className="hint">
+            The room and its marks clear 2 hours after everyone leaves. Save a JPG first if you need the
+            attendance. Anyone can rejoin with code <span className="code">{room.code}</span> until then.
+          </p>
+          <div className="report-actions">
+            <button type="button" onClick={() => setLeaveOpen(false)}>
+              Stay
+            </button>
+            <button type="button" onClick={() => downloadRoomJpg(room)}>
+              Save JPG
+            </button>
+            <button type="button" className="primary" onClick={() => router.push("/")}>
+              Leave room
+            </button>
+          </div>
         </div>
       )}
 

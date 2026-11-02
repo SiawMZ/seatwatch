@@ -884,3 +884,49 @@ input[aria-invalid="true"] {
   border-color: var(--ink);
   box-shadow: inset 0 0 0 1px var(--ink);
 }
+
+/* Delete or remove a template */
+.danger-zone {
+  display: grid;
+  justify-items: start;
+  gap: 6px;
+  margin-top: 28px;
+  padding-top: 16px;
+  border-top: 1px solid var(--line);
+}
+
+/* Leaving a room */
+.room-title-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.leave {
+  flex: none;
+  width: 40px;
+  padding: 0;
+  font-size: 1.3rem;
+}
+
+.leave-panel {
+  position: fixed;
+  left: 12px;
+  right: 12px;
+  bottom: calc(12px + env(safe-area-inset-bottom));
+  z-index: 6;
+  display: grid;
+  gap: 10px;
+  max-width: 480px;
+  margin: 0 auto;
+  padding: 16px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+  box-shadow: 0 8px 30px rgb(0 0 0 / 0.25);
+}
+
+.leave-panel .report-actions {
+  justify-content: flex-end;
+}

@@ -57,6 +57,7 @@ export const api = {
     rpc<{ seats: SeatMapState; extra: number } | null>("reset_room", { p_code: code }),
   myTemplates: () => rpc<{ token: string; name: string }[]>("my_templates", {}),
   claimTemplate: (token: string) => rpc<{ ok: boolean } | null>("claim_template", { p_token: token }),
+  deleteTemplate: (token: string) => rpc<{ ok: boolean } | null>("delete_template", { p_token: token }),
 };
 
 /** Signing in is optional and only exists with real Supabase, not the local stand-in. */

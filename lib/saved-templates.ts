@@ -19,3 +19,11 @@ export function rememberTemplate(token: string, name: string) {
     // Storage can be blocked, and the app works without this list.
   }
 }
+
+export function forgetTemplate(token: string) {
+  try {
+    localStorage.setItem(KEY, JSON.stringify(savedTemplates().filter((t) => t.token !== token)));
+  } catch {
+    // Storage can be blocked, and then there is no list to tidy.
+  }
+}
