@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useState, type FormEvent } from "react";
 import { api } from "@/lib/backend";
+import { recentRooms, timeAgo, type RecentRoom } from "@/lib/recent-rooms";
 import { savedTemplates, type SavedTemplate } from "@/lib/saved-templates";
 import { useAccount } from "@/lib/use-account";
 import { AccountBar } from "./AccountBar";
@@ -14,12 +15,14 @@ export function Home() {
   const [code, setCode] = useState("");
   const [onThisPhone, setOnThisPhone] = useState<SavedTemplate[]>([]);
   const [inAccount, setInAccount] = useState<SavedTemplate[]>([]);
+  const [rooms, setRooms] = useState<RecentRoom[]>([]);
   const { user, ready } = useAccount();
 
   useEffect(() => {
     // Browser storage only exists after the page has loaded in the browser.
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setOnThisPhone(savedTemplates());
+    setRooms(recentRooms());
   }, []);
 
   useEffect(() => {
@@ -61,6 +64,24 @@ export function Home() {
           Join
         </button>
       </form>
+
+      {rooms.length > 0 && (
+        <section>
+          <h2>Recent rooms</h2>
+          <ul className="template-list">
+            {rooms.map((room) => (
+              <li key={room.code}>
+                <Link href={`/r/${room.code}`} className="recent-room">
+                  <span>{room.name}</span>
+                  <span className="tag">
+                    <span className="code">{room.code}</span> · {timeAgo(room.visitedAt)}
+                  </span>
+                </Link>
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
 
       <section>
         <h2>Templates</h2>

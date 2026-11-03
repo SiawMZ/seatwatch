@@ -930,3 +930,22 @@ input[aria-invalid="true"] {
 .leave-panel .report-actions {
   justify-content: flex-end;
 }
+
+/* Recent rooms on the start page */
+.recent-room {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 12px;
+}
+
+.recent-room span:first-child {
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.recent-room .tag {
+  flex: none;
+}

@@ -19,6 +19,7 @@ import {
   type Status,
 } from "@/lib/layout";
 import { clampZoom, MAX_ZOOM, MIN_ZOOM, SeatMap, statusColor } from "./SeatMap";
+import { forgetRoom, rememberRoom } from "@/lib/recent-rooms";
 import { ThemeSwitch } from "./ThemeSwitch";
 
 const REFRESH_MS = 30_000;
@@ -94,6 +95,16 @@ export function Room({ code }: { code: string }) {
       connection.close();
     };
   }, [code, refresh]);
+
+  // Kept on this phone so the start page can offer a one-tap way back in.
+  const roomName = room?.name;
+  useEffect(() => {
+    if (roomName) rememberRoom(code, roomName);
+  }, [code, roomName]);
+
+  useEffect(() => {
+    if (gone) forgetRoom(code);
+  }, [code, gone]);
 
   useEffect(() => {
     if (!shareOpen) return;
