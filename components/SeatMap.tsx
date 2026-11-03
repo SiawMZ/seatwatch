@@ -11,6 +11,7 @@ import {
 } from "react";
 import {
   doorPosition,
+  mapExtent,
   rowHandle,
   rowsOf,
   STATUS_META,
@@ -56,6 +57,9 @@ type Moving = { id: string; startX: number; startY: number; unit: number; dx: nu
 const HOLD_MS = 300;
 const HOLD_SLOP_PX = 8;
 
+/** Room left on each side of the map while adding chairs, in seat widths. */
+const PLACING_PAD = 2.5;
+
 /** Moves snap to half a seat, so sections line up easily. */
 const snap = (value: number) => Math.round(value * 2) / 2;
 
@@ -78,6 +82,12 @@ export function SeatMap({
   const rows = useMemo(() => rowsOf(layout), [layout]);
   const arranging = Boolean(onSectionMove);
   const placing = Boolean(onMapTap);
+  // While adding chairs, leave room beyond the outer sections so chairs can go there too.
+  const view = useMemo(() => {
+    const { left, right } = mapExtent(layout);
+    const pad = placing ? PLACING_PAD : 0;
+    return { x: left - pad, w: right - left + pad * 2 };
+  }, [layout, placing]);
   // A dashed outline marks each batch of added chairs, so everyone can tell they aren't in the template.
   const addedBatches = useMemo(() => {
     const batches = new Map<string, { x1: number; y1: number; x2: number; y2: number }>();
@@ -227,7 +237,7 @@ export function SeatMap({
     } catch {
       // Not every pointer can be captured, and the drag still works without it.
     }
-    const next = { id, startX: x, startY: y, unit: svgWidth / layout.width, dx: 0, dy: 0 };
+    const next = { id, startX: x, startY: y, unit: svgWidth / view.w, dx: 0, dy: 0 };
     movingNow.current = true;
     setMoving(next);
   };
@@ -334,7 +344,7 @@ export function SeatMap({
     <div ref={box} className="map-scroll" style={{ touchAction: dragMode ? "none" : "pan-x pan-y" }}>
       <svg
         ref={svg}
-        viewBox={`0 0 ${layout.width} ${layout.height}`}
+        viewBox={`${view.x} 0 ${view.w} ${layout.height}`}
         style={{ width: `${zoom * 100}%` }}
         className={[highlight && "finding", placing && "placing"].filter(Boolean).join(" ") || undefined}
         role="group"

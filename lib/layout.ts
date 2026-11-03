@@ -247,20 +247,31 @@ export const MAX_ADDED = 40;
 
 export type ChairDirection = "across" | "down";
 
+function nearestSeat(layout: Layout, at: { x: number; y: number }) {
+  let best: Seat | null = null;
+  let bestDistance = Infinity;
+  for (const seat of layout.seats) {
+    if (seat.removed) continue;
+    const distance = Math.hypot(seat.x + 0.5 - at.x, seat.y + 0.5 - at.y);
+    if (distance < bestDistance) [best, bestDistance] = [seat, distance];
+  }
+  return best;
+}
+
 /**
  * A line of chairs put out during a service, starting where the map was tapped.
- * It is pulled back inside the map where it fits, and the map grows where it doesn't.
+ * Chairs line up with the seat nearest the tap, since sections sit at fractions of a seat
+ * and a fixed grid would leave them slightly off. Past the back or the sides, the map grows.
  */
 export function placeChairs(layout: Layout, batch: string, at: { x: number; y: number }, count: number, direction: ChairDirection) {
   const across = direction === "across";
-  const spanX = across ? count : 1;
-  const spanY = across ? 1 : count;
-  const fit = (value: number, span: number, min: number, size: number) =>
-    Math.max(min, Math.min(Math.round(value * 2) / 2, size - span));
-  // Leave room for the free-seat counter: left of a row, above a column (see rowHandle).
-  const x = fit(at.x - 0.5, spanX, across ? ROW_HANDLE : 0, layout.width);
-  // Chairs may go into the strip along the back, where the doors are. The map then grows to keep it clear.
-  const y = fit(at.y - 0.5, spanY, across ? SEATS_TOP : SEATS_TOP + 1, layout.height);
+  const near = nearestSeat(layout, at);
+  const align = (value: number, base?: number) =>
+    base === undefined ? Math.round(value * 2) / 2 : base + Math.round(value - base);
+  const x = align(at.x - 0.5, near?.x);
+  let y = align(at.y - 0.5, near?.y);
+  // Not into the stage. Whole steps keep the chairs on the same grid.
+  if (y < SEATS_TOP) y += Math.ceil(SEATS_TOP - y - 0.001);
 
   const seats: Seat[] = Array.from({ length: count }, (_, i) => ({
     id: `add-${batch}-${i}`,
@@ -272,15 +283,27 @@ export function placeChairs(layout: Layout, batch: string, at: { x: number; y: n
     section: `add-${batch}`,
     added: true,
   }));
-  return {
-    seats,
-    width: Math.max(layout.width, x + spanX),
-    height: Math.max(layout.height, y + spanY + BOTTOM_STRIP),
-  };
+  // Chairs past either side are covered by mapExtent, so only the back needs to grow.
+  return { seats, width: layout.width, height: Math.max(layout.height, y + (across ? 1 : count) + BOTTOM_STRIP) };
 }
 
-// Up to a seat away in any direction, closest first.
-const STEPS = [0, -0.5, 0.5, -1, 1];
+/**
+ * Left and right edges of the map. Added chairs, and the counters beside them, can sit past
+ * the template's own edges, so the map widens to show them.
+ */
+export function mapExtent(layout: Layout) {
+  let left = 0;
+  let right = layout.width;
+  for (const seat of layout.seats) {
+    if (!seat.added) continue;
+    left = Math.min(left, seat.x - 1.2);
+    right = Math.max(right, seat.x + 1.1);
+  }
+  return { left, right };
+}
+
+// Up to two seats away in any direction, closest first. Whole steps keep chairs lined up.
+const STEPS = [0, -1, 1, -2, 2];
 const NUDGES = STEPS.flatMap((dx) => STEPS.map((dy) => ({ dx, dy }))).sort(
   (a, b) => Math.hypot(a.dx, a.dy) - Math.hypot(b.dx, b.dy),
 );

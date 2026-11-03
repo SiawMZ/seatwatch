@@ -2,6 +2,7 @@ import type { RoomData } from "./backend";
 import {
   doorPosition,
   formatStamp,
+  mapExtent,
   STATUS_META,
   STATUSES,
   stagePosition,
@@ -17,9 +18,11 @@ const FONT = "Arial, Helvetica, sans-serif";
 export function drawRoom(room: RoomData, date: Date) {
   const { layout, seats, extra } = room;
   const { counts, groups } = summarise(layout, seats);
-  const cell = Math.max(22, Math.min(40, 1100 / layout.width));
+  // Added chairs can sit past the template's edges, so the picture widens to include them.
+  const extent = mapExtent(layout);
+  const cell = Math.max(22, Math.min(40, 1100 / (extent.right - extent.left)));
   const pad = 48;
-  const mapWidth = layout.width * cell;
+  const mapWidth = (extent.right - extent.left) * cell;
   const width = Math.max(mapWidth + pad * 2, 900);
   const header = 214 + groups.length * 30;
   const height = header + layout.height * cell + pad;
@@ -65,7 +68,7 @@ export function drawRoom(room: RoomData, date: Date) {
     );
   });
 
-  const left = (width - mapWidth) / 2;
+  const left = (width - mapWidth) / 2 - extent.left * cell;
   const top = header;
   const stage = stagePosition(layout);
   ctx.fillStyle = "#e4e0d6";
