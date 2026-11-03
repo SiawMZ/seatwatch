@@ -1,5 +1,5 @@
 import { createClient, type SupabaseClient, type User } from "@supabase/supabase-js";
-import type { Layout, SeatMapState } from "./layout";
+import type { Layout, Seat, SeatMapState } from "./layout";
 
 const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
 const key = process.env.NEXT_PUBLIC_SUPABASE_KEY;
@@ -39,7 +39,15 @@ async function rpc<T>(fn: string, args: Record<string, unknown>): Promise<T> {
 
 export type TemplateData = { name: string; layout: Layout; owned?: boolean; ownedByOther?: boolean };
 export type RoomData = { name: string; layout: Layout; code: string; seats: SeatMapState; extra: number };
-export type RoomPatch = { seats?: SeatMapState; replaceSeats?: SeatMapState; extra?: number };
+export type AddedChairs = { seats: Seat[]; width: number; height: number };
+// Chairs travel as additions and removals, so two ushers adding at once both keep theirs.
+export type RoomPatch = {
+  seats?: SeatMapState;
+  replaceSeats?: SeatMapState;
+  extra?: number;
+  addChairs?: AddedChairs;
+  removeChairs?: string;
+};
 
 export const api = {
   createTemplate: (name: string, layout: Layout) =>
@@ -53,6 +61,15 @@ export const api = {
     rpc<{ ok: true } | null>("mark_seats", { p_code: code, p_patch: patch }),
   addExtra: (code: string, delta: number) =>
     rpc<{ extra: number } | null>("add_extra", { p_code: code, p_delta: delta }),
+  addSeats: (code: string, chairs: AddedChairs) =>
+    rpc<{ ok: true } | null>("add_seats", {
+      p_code: code,
+      p_seats: chairs.seats,
+      p_width: chairs.width,
+      p_height: chairs.height,
+    }),
+  removeSeats: (code: string, batch: string) =>
+    rpc<{ ok: true } | null>("remove_seats", { p_code: code, p_batch: batch }),
   resetRoom: (code: string) =>
     rpc<{ seats: SeatMapState; extra: number } | null>("reset_room", { p_code: code }),
   myTemplates: () => rpc<{ token: string; name: string }[]>("my_templates", {}),

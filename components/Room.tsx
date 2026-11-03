@@ -4,16 +4,20 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import QRCode from "qrcode";
-import { api, connectRoom, type RoomData, type RoomPatch } from "@/lib/backend";
+import { api, connectRoom, type AddedChairs, type RoomData, type RoomPatch } from "@/lib/backend";
 import { downloadRoomJpg } from "@/lib/export-jpg";
 import {
   findTogether,
+  MAX_ADDED,
+  overlapsSeats,
   pickGroup,
+  placeChairsNear,
   STATUS_META,
   STATUSES,
   statusOf,
   summarise,
   summaryText,
+  type ChairDirection,
   type Seat,
   type SeatMapState,
   type Status,
@@ -48,6 +52,12 @@ export function Room({ code }: { code: string }) {
   const [groupSize, setGroupSize] = useState<number | null>(null);
   // Only this phone's own marks can be undone. Each entry holds what the seats were before.
   const [history, setHistory] = useState<SeatMapState[]>([]);
+  // Adding chairs: while open, a tap on the map shows where they'd go, or picks a batch already added.
+  const [placing, setPlacing] = useState(false);
+  const [chairCount, setChairCount] = useState(4);
+  const [direction, setDirection] = useState<ChairDirection>("across");
+  const [spot, setSpot] = useState<{ x: number; y: number } | null>(null);
+  const [chosenBatch, setChosenBatch] = useState<string | null>(null);
 
   const link = useRef<ReturnType<typeof connectRoom> | null>(null);
   // Counts local changes, so a slower read that started earlier can't undo them on screen.
@@ -202,6 +212,59 @@ export function Room({ code }: { code: string }) {
     }
   };
 
+  // Shared by adding and removing chairs: show the change now, save it, then tell the other phones.
+  const changeChairs = async (patch: RoomPatch, save: () => Promise<unknown>, undo: RoomPatch, done: string) => {
+    changeCount.current++;
+    pending.current++;
+    setRoom((current) => (current ? applyPatch(current, patch) : current));
+    try {
+      if (!(await save())) setGone(true);
+      else {
+        link.current?.broadcast(patch);
+        flash(done);
+      }
+    } catch {
+      setRoom((current) => (current ? applyPatch(current, undo) : current));
+      flash("That change didn't save. Please try again.");
+    } finally {
+      pending.current--;
+      if (pending.current === 0) changeCount.current++;
+    }
+  };
+
+  const openPlacing = () => {
+    setPlacing(!placing);
+    setSpot(null);
+    setChosenBatch(null);
+    setGroupSize(null);
+    setDragMode(false);
+  };
+
+  const addChairs = () => {
+    if (!room || !spot) return;
+    const batch = Math.random().toString(36).slice(2, 8);
+    const chairs: AddedChairs = placeChairsNear(room.layout, batch, spot, chairCount, direction);
+    setSpot(null);
+    changeChairs(
+      { addChairs: chairs },
+      () => api.addSeats(code, chairs),
+      { removeChairs: `add-${batch}` },
+      `Added ${chairCount} ${chairCount === 1 ? "chair" : "chairs"}`,
+    );
+  };
+
+  const removeChairs = (batch: string) => {
+    if (!room) return;
+    const chairs = room.layout.seats.filter((s) => s.added && s.section === batch);
+    setChosenBatch(null);
+    changeChairs(
+      { removeChairs: batch },
+      () => api.removeSeats(code, batch),
+      { addChairs: { seats: chairs, width: room.layout.width, height: room.layout.height } },
+      `Removed ${chairs.length} ${chairs.length === 1 ? "chair" : "chairs"}`,
+    );
+  };
+
   const reset = async () => {
     if (!confirmReset) {
       setConfirmReset(true);
@@ -264,6 +327,9 @@ export function Room({ code }: { code: string }) {
     preview.has(seat.id) && (statusOf(seats, seat.id) !== "not_in_use" || tool === "not_in_use")
       ? tool
       : statusOf(seats, seat.id);
+  const ghost = placing && spot ? placeChairsNear(room.layout, "preview", spot, chairCount, direction).seats : [];
+  const ghostBlocked = overlapsSeats(room.layout, ghost);
+  const chosen = chosenBatch ? room.layout.seats.filter((s) => s.added && s.section === chosenBatch) : [];
 
   return (
     <main className="room">
@@ -319,14 +385,24 @@ export function Room({ code }: { code: string }) {
         layout={room.layout}
         statusFor={statusFor}
         onSeatTap={tapSeat}
-        onRowTap={tapRow}
+        onRowTap={placing ? undefined : tapRow}
         dragMode={dragMode}
         onDragMove={setDragPreview}
         onDragEnd={(list) => {
           setDragPreview([]);
           paint(list);
         }}
-        highlight={found?.seatIds ?? null}
+        highlight={chosen.length ? new Set(chosen.map((s) => s.id)) : (found?.seatIds ?? null)}
+        onMapTap={
+          placing
+            ? (point, seat) => {
+                setChosenBatch(seat?.added ? (seat.section ?? null) : null);
+                setSpot(seat?.added ? null : point);
+              }
+            : undefined
+        }
+        ghost={ghost}
+        ghostBlocked={ghostBlocked}
         zoom={zoom}
         onZoomChange={setZoom}
       />
@@ -442,6 +518,71 @@ export function Room({ code }: { code: string }) {
       )}
 
       <nav className="toolbar" aria-label="Marking tools">
+        {placing && (
+          <div className="find-bar place-bar" role="status">
+            {chosen.length > 0 ? (
+              <>
+                <span className="find-result">
+                  {chosen.length} added {chosen.length === 1 ? "chair" : "chairs"} selected
+                </span>
+                <button type="button" className="danger" onClick={() => removeChairs(chosenBatch!)}>
+                  Remove
+                </button>
+                <button type="button" onClick={() => setChosenBatch(null)}>
+                  Keep
+                </button>
+              </>
+            ) : (
+              <>
+                <span className="find-result">
+                  {!spot
+                    ? `Tap the map where the ${chairCount === 1 ? "chair goes" : `${chairCount} chairs go`}. Tap an added chair to remove it.`
+                    : ghostBlocked
+                      ? "That's on top of other seats. Tap somewhere else."
+                      : "Tap again to move them, or Add."}
+                </span>
+                <button type="button" onClick={openPlacing}>
+                  Done
+                </button>
+                <div className="stepper">
+                  <button
+                    type="button"
+                    aria-label="Fewer chairs"
+                    disabled={chairCount <= 1}
+                    onClick={() => setChairCount((n) => Math.max(1, n - 1))}
+                  >
+                    −
+                  </button>
+                  <strong>{chairCount}</strong>
+                  <button
+                    type="button"
+                    aria-label="More chairs"
+                    disabled={chairCount >= MAX_ADDED}
+                    onClick={() => setChairCount((n) => Math.min(MAX_ADDED, n + 1))}
+                  >
+                    +
+                  </button>
+                </div>
+                <div className="segmented" role="radiogroup" aria-label="Direction">
+                  {(["across", "down"] as const).map((d) => (
+                    <button
+                      key={d}
+                      type="button"
+                      role="radio"
+                      aria-checked={direction === d}
+                      onClick={() => setDirection(d)}
+                    >
+                      {d === "across" ? "Across" : "Down"}
+                    </button>
+                  ))}
+                </div>
+                <button type="button" className="primary" disabled={!spot || ghostBlocked} onClick={addChairs}>
+                  Add
+                </button>
+              </>
+            )}
+          </div>
+        )}
         {groupSize !== null && found && (
           <div className="find-bar" role="status">
             <span>Seats together</span>
@@ -507,9 +648,15 @@ export function Room({ code }: { code: string }) {
           <button
             type="button"
             aria-pressed={groupSize !== null}
-            onClick={() => setGroupSize(groupSize === null ? 2 : null)}
+            onClick={() => {
+              setPlacing(false);
+              setGroupSize(groupSize === null ? 2 : null);
+            }}
           >
             Find
+          </button>
+          <button type="button" aria-pressed={placing} onClick={openPlacing}>
+            Chairs
           </button>
           <button type="button" onClick={undo} disabled={history.length === 0}>
             Undo
@@ -539,9 +686,24 @@ export function Room({ code }: { code: string }) {
 }
 
 function applyPatch(room: RoomData, patch: RoomPatch): RoomData {
-  return {
-    ...room,
-    seats: patch.replaceSeats ?? (patch.seats ? { ...room.seats, ...patch.seats } : room.seats),
-    extra: patch.extra ?? room.extra,
-  };
+  let layout = room.layout;
+  let seats = patch.replaceSeats ?? (patch.seats ? { ...room.seats, ...patch.seats } : room.seats);
+  if (patch.addChairs) {
+    // The same chairs can arrive twice, from this phone and again from a refresh.
+    const known = new Set(layout.seats.map((s) => s.id));
+    layout = {
+      ...layout,
+      seats: [...layout.seats, ...patch.addChairs.seats.filter((s) => !known.has(s.id))],
+      width: Math.max(layout.width, patch.addChairs.width),
+      height: Math.max(layout.height, patch.addChairs.height),
+    };
+  }
+  if (patch.removeChairs) {
+    const batch = patch.removeChairs;
+    const gone = layout.seats.filter((s) => s.added && s.section === batch).map((s) => s.id);
+    layout = { ...layout, seats: layout.seats.filter((s) => !(s.added && s.section === batch)) };
+    seats = { ...seats };
+    for (const id of gone) delete seats[id];
+  }
+  return { ...room, layout, seats, extra: patch.extra ?? room.extra };
 }

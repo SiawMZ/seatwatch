@@ -13,6 +13,8 @@ const ALLOWED = new Set([
   "get_room",
   "mark_seats",
   "add_extra",
+  "add_seats",
+  "remove_seats",
   "reset_room",
   "cleanup_rooms",
   "claim_template",

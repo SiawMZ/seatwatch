@@ -180,6 +180,54 @@ language sql security definer set search_path = public as $$
   returning jsonb_build_object('extra', extra)
 $$;
 
+-- Chairs put out during a service. They belong to this room only, never the template.
+-- Every added seat's id starts with "add-", so they can't be mistaken for template seats.
+create or replace function add_seats(p_code text, p_seats jsonb, p_width numeric, p_height numeric)
+returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare v_room rooms;
+begin
+  if jsonb_typeof(p_seats) is distinct from 'array' or jsonb_array_length(p_seats) not between 1 and 40 then
+    raise exception 'Add 1 to 40 chairs at a time';
+  end if;
+  if exists (select 1 from jsonb_array_elements(p_seats) s where (s ->> 'id') not like 'add-%') then
+    raise exception 'Added chairs need ids starting with add-';
+  end if;
+  select * into v_room from rooms
+  where code = upper(p_code) and last_seen_at >= now() - interval '2 hours'
+  for update;
+  if not found then return null; end if;
+  if jsonb_array_length(v_room.layout -> 'seats') + jsonb_array_length(p_seats) > 2000 then
+    raise exception 'A room can have at most 2000 seats';
+  end if;
+  update rooms set
+    last_seen_at = now(),
+    layout = layout || jsonb_build_object(
+      'seats', (layout -> 'seats') || p_seats,
+      'width', greatest((layout ->> 'width')::numeric, p_width),
+      'height', greatest((layout ->> 'height')::numeric, p_height)
+    )
+  where code = v_room.code;
+  return jsonb_build_object('ok', true);
+end $$;
+
+-- Takes away one batch of added chairs, and any marks on them.
+create or replace function remove_seats(p_code text, p_batch text) returns jsonb
+language sql security definer set search_path = public as $$
+  update rooms r set
+    last_seen_at = now(),
+    layout = r.layout || jsonb_build_object('seats', coalesce((
+      select jsonb_agg(s) from jsonb_array_elements(r.layout -> 'seats') s
+      where not ((s ->> 'added') = 'true' and s ->> 'section' = p_batch)
+    ), '[]'::jsonb)),
+    seats = r.seats - coalesce((
+      select array_agg(s ->> 'id') from jsonb_array_elements(r.layout -> 'seats') s
+      where (s ->> 'added') = 'true' and s ->> 'section' = p_batch
+    ), '{}'::text[])
+  where r.code = upper(p_code) and r.last_seen_at >= now() - interval '2 hours'
+  returning jsonb_build_object('ok', true)
+$$;
+
 create or replace function reset_room(p_code text) returns jsonb
 language sql security definer set search_path = public as $$
   update rooms set last_seen_at = now(), seats = initial_seats(layout), extra = 0

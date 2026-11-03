@@ -949,3 +949,45 @@ input[aria-invalid="true"] {
 .recent-room .tag {
   flex: none;
 }
+
+/* Chairs added during a service */
+.added-outline {
+  fill: none;
+  stroke: var(--muted);
+  stroke-width: 0.05;
+  stroke-dasharray: 0.2 0.15;
+  pointer-events: none;
+}
+
+.ghost {
+  fill: none;
+  stroke: var(--ink);
+  stroke-width: 0.08;
+  stroke-dasharray: 0.15 0.1;
+  pointer-events: none;
+}
+
+.ghost.blocked {
+  stroke: var(--danger);
+}
+
+.placing {
+  cursor: crosshair;
+}
+
+.place-bar .segmented button {
+  min-height: 40px;
+}
+
+/* Hint and Done on the first line, the controls on the second. */
+.place-bar .find-result {
+  flex: 1 1 calc(100% - 90px);
+}
+
+.place-bar .segmented button {
+  padding: 4px 10px;
+}
+
+.place-bar .primary {
+  flex: 1;
+}

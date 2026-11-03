@@ -65,6 +65,8 @@ export type Seat = {
   order?: number;
   inactive?: boolean;
   removed?: boolean;
+  /** A chair put out during a service. It lives in the room only, not the template. */
+  added?: boolean;
 };
 
 export type Table = { id: string; label: string; cx: number; cy: number; r: number; section: string };
@@ -238,6 +240,85 @@ export function doorPosition(door: Door, layout: Layout) {
 export function stagePosition(layout: Layout) {
   const w = Math.max(3, layout.width * 0.4);
   return { x: (layout.width - w) / 2, y: 0, w, h: STAGE_HEIGHT };
+}
+
+export const ADDED_GROUP = "Added chairs";
+export const MAX_ADDED = 40;
+
+export type ChairDirection = "across" | "down";
+
+/**
+ * A line of chairs put out during a service, starting where the map was tapped.
+ * It is pulled back inside the map where it fits, and the map grows where it doesn't.
+ */
+export function placeChairs(layout: Layout, batch: string, at: { x: number; y: number }, count: number, direction: ChairDirection) {
+  const across = direction === "across";
+  const spanX = across ? count : 1;
+  const spanY = across ? 1 : count;
+  const fit = (value: number, span: number, min: number, size: number) =>
+    Math.max(min, Math.min(Math.round(value * 2) / 2, size - span));
+  // Leave room for the free-seat counter: left of a row, above a column (see rowHandle).
+  const x = fit(at.x - 0.5, spanX, across ? ROW_HANDLE : 0, layout.width);
+  // Chairs may go into the strip along the back, where the doors are. The map then grows to keep it clear.
+  const y = fit(at.y - 0.5, spanY, across ? SEATS_TOP : SEATS_TOP + 1, layout.height);
+
+  const seats: Seat[] = Array.from({ length: count }, (_, i) => ({
+    id: `add-${batch}-${i}`,
+    x: across ? x + i : x,
+    y: across ? y : y + i,
+    group: ADDED_GROUP,
+    // Chairs down an aisle are one behind another, so Find never treats them as side by side.
+    row: `add-${batch}`,
+    section: `add-${batch}`,
+    added: true,
+  }));
+  return {
+    seats,
+    width: Math.max(layout.width, x + spanX),
+    height: Math.max(layout.height, y + spanY + BOTTOM_STRIP),
+  };
+}
+
+// Up to a seat away in any direction, closest first.
+const STEPS = [0, -0.5, 0.5, -1, 1];
+const NUDGES = STEPS.flatMap((dx) => STEPS.map((dy) => ({ dx, dy }))).sort(
+  (a, b) => Math.hypot(a.dx, a.dy) - Math.hypot(b.dx, b.dy),
+);
+
+/** Like placeChairs, but a near miss slides to the closest free spot, so a narrow aisle is easy to hit. */
+export function placeChairsNear(layout: Layout, batch: string, at: { x: number; y: number }, count: number, direction: ChairDirection) {
+  for (const { dx, dy } of NUDGES) {
+    const placed = placeChairs(layout, batch, { x: at.x + dx, y: at.y + dy }, count, direction);
+    if (!overlapsSeats(layout, placed.seats)) return placed;
+  }
+  return placeChairs(layout, batch, at, count, direction);
+}
+
+/**
+ * Top-left of a row's free-seat counter. It sits left of a row, but above a single
+ * column of chairs, since an aisle has no room beside them.
+ */
+export function rowHandle(seats: Seat[]) {
+  const column = seats.every((s) => s.added && s.x === seats[0].x);
+  if (column) {
+    const top = seats.reduce((a, b) => (b.y < a.y ? b : a));
+    return { x: top.x + 0.025, y: top.y - 1 };
+  }
+  const first = seats.reduce((a, b) => (b.x < a.x ? b : a));
+  return { x: first.x - 1.1, y: first.y };
+}
+
+/** True when any of the new chairs, or their free-seat counter, would sit on a seat or counter already on the map. */
+export function overlapsSeats(layout: Layout, chairs: Seat[]) {
+  if (chairs.length === 0) return false;
+  const cells = [...chairs, rowHandle(chairs)];
+  const taken = [
+    ...layout.seats.filter((seat) => !seat.removed),
+    ...rowsOf(layout)
+      .filter((row) => !row.isTable)
+      .map((row) => rowHandle(row.seats)),
+  ];
+  return cells.some((cell) => taken.some((t) => Math.abs(t.x - cell.x) < 0.9 && Math.abs(t.y - cell.y) < 0.9));
 }
 
 export type SeatMapState = Record<string, Status>;

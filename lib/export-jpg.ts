@@ -95,6 +95,25 @@ export function drawRoom(room: RoomData, date: Date) {
     drawSeat(ctx, left + seat.x * cell, top + seat.y * cell, cell, statusOf(seats, seat.id));
   }
 
+  // Chairs added during the service get the same dashed outline as on screen.
+  const batches = new Map<string | undefined, typeof layout.seats>();
+  for (const seat of layout.seats) {
+    if (seat.added) batches.set(seat.section, [...(batches.get(seat.section) ?? []), seat]);
+  }
+  ctx.save();
+  ctx.strokeStyle = MUTED;
+  ctx.setLineDash([cell * 0.2, cell * 0.15]);
+  for (const chairs of batches.values()) {
+    const x1 = Math.min(...chairs.map((s) => s.x));
+    const y1 = Math.min(...chairs.map((s) => s.y));
+    const x2 = Math.max(...chairs.map((s) => s.x + 1));
+    const y2 = Math.max(...chairs.map((s) => s.y + 1));
+    ctx.beginPath();
+    ctx.roundRect(left + (x1 - 0.1) * cell, top + (y1 - 0.1) * cell, (x2 - x1 + 0.2) * cell, (y2 - y1 + 0.2) * cell, cell * 0.25);
+    ctx.stroke();
+  }
+  ctx.restore();
+
   return canvas;
 }
 

@@ -1,8 +1,17 @@
 "use client";
 
-import { useEffect, useLayoutEffect, useMemo, useRef, useState, type PointerEvent } from "react";
+import {
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  type MouseEvent,
+  type PointerEvent,
+} from "react";
 import {
   doorPosition,
+  rowHandle,
   rowsOf,
   STATUS_META,
   stagePosition,
@@ -34,6 +43,11 @@ type Props = {
   onZoomChange?: (zoom: number) => void;
   /** Turns on arranging: sections can be dragged, and this gets the distance moved in seat widths. */
   onSectionMove?: (id: string, dx: number, dy: number) => void;
+  /** Turns on placing chairs: any tap on the map reports its point in seat widths, and the seat under it. */
+  onMapTap?: (point: { x: number; y: number }, seat: Seat | null) => void;
+  /** Chairs about to be added, drawn as outlines. */
+  ghost?: Seat[];
+  ghostBlocked?: boolean;
 };
 
 type Moving = { id: string; startX: number; startY: number; unit: number; dx: number; dy: number };
@@ -57,9 +71,28 @@ export function SeatMap({
   zoom: controlledZoom,
   onZoomChange,
   onSectionMove,
+  onMapTap,
+  ghost = [],
+  ghostBlocked = false,
 }: Props) {
   const rows = useMemo(() => rowsOf(layout), [layout]);
   const arranging = Boolean(onSectionMove);
+  const placing = Boolean(onMapTap);
+  // A dashed outline marks each batch of added chairs, so everyone can tell they aren't in the template.
+  const addedBatches = useMemo(() => {
+    const batches = new Map<string, { x1: number; y1: number; x2: number; y2: number }>();
+    for (const seat of layout.seats) {
+      if (!seat.added || !seat.section) continue;
+      const b = batches.get(seat.section);
+      batches.set(
+        seat.section,
+        b
+          ? { x1: Math.min(b.x1, seat.x), y1: Math.min(b.y1, seat.y), x2: Math.max(b.x2, seat.x + 1), y2: Math.max(b.y2, seat.y + 1) }
+          : { x1: seat.x, y1: seat.y, x2: seat.x + 1, y2: seat.y + 1 },
+      );
+    }
+    return [...batches.entries()];
+  }, [layout]);
   const [moving, setMoving] = useState<Moving | null>(null);
   const hold = useRef<{ x: number; y: number; timer: ReturnType<typeof setTimeout> } | null>(null);
   // Read by the touch listener below, which can't see React state.
@@ -263,6 +296,14 @@ export function SeatMap({
     pointers.current = Math.max(0, pointers.current - 1);
   };
 
+  const tapMap = (event: MouseEvent<SVGSVGElement>) => {
+    const matrix = svg.current?.getScreenCTM();
+    if (!matrix || !onMapTap) return;
+    const point = new DOMPoint(event.clientX, event.clientY).matrixTransform(matrix.inverse());
+    const id = (event.target as Element).closest("[data-seat]")?.getAttribute("data-seat") ?? "";
+    onMapTap({ x: point.x, y: point.y }, seatsById.get(id) ?? null);
+  };
+
   const dragHandlers = dragMode
     ? {
         onPointerDown: (event: PointerEvent) => {
@@ -295,9 +336,10 @@ export function SeatMap({
         ref={svg}
         viewBox={`0 0 ${layout.width} ${layout.height}`}
         style={{ width: `${zoom * 100}%` }}
-        className={highlight ? "finding" : undefined}
+        className={[highlight && "finding", placing && "placing"].filter(Boolean).join(" ") || undefined}
         role="group"
         aria-label="Seat map"
+        onClick={placing ? tapMap : undefined}
         {...dragHandlers}
       >
         <rect x={stage.x} y={stage.y} width={stage.w} height={stage.h} fill="var(--stage)" />
@@ -372,15 +414,15 @@ export function SeatMap({
           rows
             .filter((row) => !row.isTable)
             .map(({ id, seats }) => {
-              const first = seats.reduce((a, b) => (b.x < a.x ? b : a));
+              const { x, y } = rowHandle(seats);
               const free = seats.filter((s) => statusFor(s) === "available").length;
               return (
                 <g key={id} className="row-handle" onClick={() => !dragMode && onRowTap(seats)}>
                   <title>Mark whole row</title>
-                  <rect x={first.x - 1.1} y={first.y + 0.08} width={0.95} height={0.84} rx={0.42} />
+                  <rect x={x} y={y + 0.08} width={0.95} height={0.84} rx={0.42} />
                   <text
-                    x={first.x - 0.625}
-                    y={first.y + 0.5}
+                    x={x + 0.475}
+                    y={y + 0.5}
                     fontSize={0.5}
                     textAnchor="middle"
                     dominantBaseline="central"
@@ -402,7 +444,7 @@ export function SeatMap({
               data-seat={seat.id}
               data-status={seat.removed ? "removed" : status}
               transform={shift(seat.section)}
-              onClick={dragMode || arranging ? undefined : () => onSeatTap(seat)}
+              onClick={dragMode || arranging || placing ? undefined : () => onSeatTap(seat)}
             >
               {/* Fills the whole cell so near-misses between seats still count as a tap. */}
               <rect x={seat.x} y={seat.y} width={1} height={1} fill="transparent" />
@@ -445,6 +487,30 @@ export function SeatMap({
             </g>
           );
         })}
+
+        {addedBatches.map(([id, b]) => (
+          <rect
+            key={id}
+            className="added-outline"
+            x={b.x1 - 0.1}
+            y={b.y1 - 0.1}
+            width={b.x2 - b.x1 + 0.2}
+            height={b.y2 - b.y1 + 0.2}
+            rx={0.25}
+          />
+        ))}
+
+        {ghost.map((seat) => (
+          <rect
+            key={seat.id}
+            className={ghostBlocked ? "ghost blocked" : "ghost"}
+            x={seat.x + 0.08}
+            y={seat.y + 0.08}
+            width={0.84}
+            height={0.84}
+            rx={0.16}
+          />
+        ))}
 
         {arranging &&
           (layout.boxes ?? []).map((section) => (
